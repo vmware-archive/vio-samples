@@ -1,0 +1,515 @@
+heat_template_version: "2018-08-31"
+description: "Heat Stack to create an Essential PKS cluster with Calico CNI"
+
+parameters:
+  name:
+    type: string
+    label: Cluster Name
+    description: Unique name for this Kubernetes cluster.
+  image:
+    type: string
+    label: Image
+    description: Image to use for the Kubernetes cluster nodes
+  availability_zone:
+    type: string
+    label: Availability Zone
+    default: nova
+    description: Availability zone for the Kubernetes cluster nodes
+  key_name:
+    type: string
+    label: Key Name
+    description: Key pair name to use when starting cluster nodes
+  private_net_cidr:
+    type: string
+    label: Private Network CIDR
+    description: CIDR for the cluster private network
+    default: "10.0.0.0/24"
+  public_network_id:
+    type: string
+    label: Public Network ID
+    description: UUID of the public network
+  public_subnet_id:
+    type: string
+    label: Public Subnet Id
+    description: UUID of the public subnet to assign LoadBalancer IPs
+  pod_network_cidr:
+    type: string
+    label: POD network CIDR
+    default: 192.168.0.0/16
+  nameserver:
+    type: string
+    label: Nameserver for management network
+    default: 192.168.111.1
+  node_count:
+    type: string
+    label: Number of minion nodes
+    default: 3
+  kube_token:
+    type: string
+    label: Token for kubeadm to join minion nodes
+    default: abcdef.0123456789abcdef
+  os_username:
+    type: string
+    label: Openstack username
+  os_password:
+    type: string
+    label: Openstack password
+  os_tenant_id:
+    type: string
+    label: Openstack tenant id
+  os_domain_id:
+    type: string
+    label: Openstack domain id
+  keystone_ip:
+    type: string
+    label: IP address of the keystone endpoint
+  keystone_hostname:
+    type: string
+    label: Hostname for the keystone endpoint
+  nova_ip:
+    type: string
+    label: IP address of the nova endpoint
+  nova_hostnames:
+    type: string
+    label: Hostname for the nova endpoint
+    description: Space separated hostnames for the nova endpoint
+  neutron_hostnames:
+    type: string
+    label: Hostname for the neutron endpoint
+    description: Space separated hostnames for the neutron endpoint
+  neutron_ip:
+    type: string
+    label: Hostname for the neutron endpoint
+    description: Space separated hostnames for the neutron endpoint
+  cinder_ip:
+    type: string
+    label: IP address of the cinder endpoint
+  cinder_hostnames:
+    type: string
+    label: Hostname for the cinder endpoint
+    description: Space separated hostnames for the cinder endpoint
+
+
+resources:
+  random:
+    type: "OS::Heat::RandomString"
+    properties:
+      length: 8
+
+  k8s_secgroup:
+    type: "OS::Neutron::SecurityGroup"
+    properties:
+      rules:
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 6443
+        port_range_max: 6443
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 2379
+        port_range_max: 2380
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 10250
+        port_range_max: 10255
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 30000
+        port_range_max: 32767
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 22
+        port_range_max: 22
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 1
+        port_range_max: 65535
+        remote_ip_prefix: { get_param: private_net_cidr }
+
+      description: "Security group for k8s clusters"
+
+  Net_1:
+    type: "OS::Neutron::Net"
+    properties:
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'private']]
+    depends_on:
+    - k8s_secgroup
+  Subnet_1:
+    type: "OS::Neutron::Subnet"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'private-sub']]
+      network: { get_resource: Net_1 }
+      ip_version: 4
+      cidr: { get_param: private_net_cidr }
+      enable_dhcp: true
+      dns_nameservers: [{ get_param: nameserver }]
+    depends_on:
+    - Net_1
+
+  Server_1_port:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_resource: Net_1 }
+      security_groups: [ get_resource: k8s_secgroup ]
+      fixed_ips:
+      - subnet_id: { get_resource: Subnet_1 }
+    depends_on:
+    - Net_1
+    - Subnet_1
+
+  Server_1:
+    type: "OS::Nova::Server"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'master']]
+      networks:
+      - port: { get_resource: Server_1_port }
+      flavor: "m1.medium"
+      image: { get_param: image }
+      availability_zone: { get_param: availability_zone }
+      key_name: { get_param: key_name }
+      user_data_format: RAW
+      user_data:
+        get_resource: kube_master_init
+    depends_on:
+    - Subnet_1
+    - Net_1
+    - k8s_secgroup
+    - Server_1_port
+
+  RouterInterface_1:
+    type: "OS::Neutron::RouterInterface"
+    properties:
+      router: { get_resource: Router_1 }
+      subnet: { get_resource: Subnet_1 }
+    depends_on:
+    - Net_1
+    - Subnet_1
+    - Router_1
+
+  Router_1:
+    type: "OS::Neutron::Router"
+    properties:
+      external_gateway_info:
+        enable_snat: true
+        network: { get_param: public_network_id }
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'router']]
+
+  Fip_1:
+    type: "OS::Neutron::FloatingIP"
+    properties:
+      floating_network: { get_param: public_network_id }
+  FipAssociation_1:
+    type: "OS::Neutron::FloatingIPAssociation"
+    properties:
+      floatingip_id: { get_resource: Fip_1 }
+      port_id: { get_resource: Server_1_port }
+
+  minion_nodes:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: { get_param: node_count }
+      resource_def:
+        type: "OS::Nova::Server"
+        properties:
+          name:
+            str_replace:
+              template: $name-minion-%index%
+              params:
+                $name: { get_param: name }
+          networks:
+          - network: { get_resource: Net_1 }
+          security_groups: [ get_resource: k8s_secgroup ]
+          flavor: "m1.medium"
+          image: { get_param: image }
+          availability_zone: { get_param: availability_zone }
+          key_name: { get_param: key_name }
+          user_data_format: RAW
+          user_data:
+            get_resource: kube_minion_init
+
+  cert_init:
+    type: OS::Heat::CloudConfig
+    properties:
+      cloud_config:
+        ca-certs:
+          trusted:
+          - { get_file: nova.crt }
+          - { get_file: neutron.crt }
+          - { get_file: cinder.crt }
+
+  docker_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        apt-get update
+        apt-get install -y docker.io socat ebtables jq
+        systemctl enable docker.service
+        UUID=$(curl -s http://169.254.169.254/openstack/2018-08-27/meta_data.json | jq -r .uuid)
+        echo $UUID > /var/lib/cloud/data/instance-id
+        cd /root
+        curl https://downloads.heptio.com/essential-pks/523a448aa3e9a0ef93ff892dceefee0a/vmware-kubernetes-v1.14.3%2Bvmware.1.tar.gz -o vmware-kubernetes-v1.14.3+vmware.1.tar.gz
+        tar -zxvf vmware-kubernetes-v1.14.3+vmware.1.tar.gz
+        cd /root/vmware-kubernetes-v1.14.3+vmware.1/kubernetes-v1.14.3+vmware.1/images
+        for f in *.gz; do cat $f | docker load; done
+        docker load -i /root/vmware-kubernetes-v1.14.3+vmware.1/coredns-v1.3.1+vmware.1/images/coredns-v1.3.1_vmware.1.tar.gz
+        docker load -i /root/vmware-kubernetes-v1.14.3+vmware.1/etcd-v3.3.10+vmware.1/images/etcd-v3.3.10_vmware.1.tar.gz
+        docker tag vmware/e2e-test:v1.14.3_vmware.1 vmware/e2e-test:v1.14.3
+        docker tag vmware/kube-apiserver:v1.14.3_vmware.1 vmware/kube-apiserver:v1.14.3
+        docker tag vmware/kube-controller-manager:v1.14.3_vmware.1 vmware/kube-controller-manager:v1.14.3
+        docker tag vmware/cloud-controller-manager:v1.14.3_vmware.1 vmware/cloud-controller-manager:v1.14.3
+        docker tag vmware/kube-scheduler:v1.14.3_vmware.1 vmware/kube-scheduler:v1.14.3
+        docker tag vmware/kube-proxy:v1.14.3_vmware.1 vmware/kube-proxy:v1.14.3
+        docker tag vmware/coredns:v1.3.1_vmware.1 vmware/coredns:1.3.1
+        docker tag vmware/etcd:v3.3.10_vmware.1 vmware/etcd:3.3.10
+
+  kube_install:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        swapoff -a
+        cd /root/vmware-kubernetes-v1.14.3+vmware.1/debs
+        dpkg -i *.deb
+        apt-get install -f -y
+        systemctl enable kubelet.service
+
+  kube_cloud_config:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            ip_addr=$(ip route get 1 | awk '{print $NF;exit}')
+            cat <<EOF >>/etc/hosts
+            ${ip_addr} $(hostname)
+            $keystone_ip $keystone_hostname
+            $nova_ip $nova_hostnames
+            $neutron_ip $neutron_hostnames
+            $cinder_ip $cinder_hostnames
+            EOF
+            cat <<EOF >/etc/kubernetes/cloud-config
+            [Global]
+            username=$os_username
+            password=$os_password
+            auth-url=http://$keystone_hostname/v3
+            tenant-id=$os_tenant_id
+            domain-id=$os_domain_id
+            [BlockStorage]
+            bs-version=v3
+            [LoadBalancer]
+            subnet-id=$subnet_id
+            floating-subnet-id=$lb_subnet_id
+            lb-version=v2
+            EOF
+            #sed -i -e "s?KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig?KUBELET_KUBECONFIG_ARGS=--cloud-provider=external --bootstrap-kubeconfig?" /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+          params:
+            $token: { get_param: kube_token }
+            $os_username: { get_param: os_username }
+            $os_password: { get_param: os_password }
+            $os_tenant_id: { get_param: os_tenant_id }
+            $os_domain_id: { get_param: os_domain_id }
+            $keystone_hostname: { get_param: keystone_hostname }
+            $keystone_ip: { get_param: keystone_ip }
+            $lb_network_id: { get_param: public_network_id }
+            $lb_subnet_id: { get_param: public_subnet_id }
+            $nova_hostnames: { get_param: nova_hostnames }
+            $nova_ip: { get_param: nova_ip }
+            $neutron_hostnames: { get_param: neutron_hostnames }
+            $neutron_ip: { get_param: neutron_ip }
+            $cinder_hostnames: { get_param: cinder_hostnames }
+            $cinder_ip: { get_param: cinder_ip }
+            $subnet_id: { get_resource: Subnet_1 }
+
+  kubeadm_master_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            ip_addr=$(ip route get 1 | awk '{print $NF;exit}')
+            cat <<EOF >/etc/kubernetes/kubeadm.conf
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: InitConfiguration
+            bootstrapTokens:
+            - token: "$token"
+              description: "default kubeadm bootstrap token"
+              ttl: "0"
+            nodeRegistration:
+              kubeletExtraArgs:
+                hostname-override: $(hostname)
+                cloud-provider: "external"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+            ---
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: ClusterConfiguration
+            kubernetesVersion: v1.14.3
+            clusterName: $name
+            imageRepository: vmware
+            etcd:
+              local:
+                imageRepository: vmware
+            apiServer:
+              extraArgs:
+                bind-address: ${ip_addr}
+                runtime-config: storage.k8s.io/v1=true
+                allow-privileged: "true"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+            controllerManager:
+              extraArgs:
+                bind-address: ${ip_addr}
+                cloud-provider: "external"
+                cloud-config: /etc/kubernetes/cloud-config
+              extraVolumes:
+              - name: "cloud-config"
+                hostPath: "/etc/kubernetes/cloud-config"
+                mountPath: "/etc/kubernetes/cloud-config"
+                pathType: File
+            networking:
+              podSubnet: $pod_network_cidr
+            scheduler:
+              extraArgs:
+                bind-address: ${ip_addr}
+            EOF
+
+            HOSTNAME_OVERRIDE=$(hostname)
+            kubeadm init --config /etc/kubernetes/kubeadm.conf
+            kubectl create clusterrolebinding controller-admin --serviceaccount=kube-system:service-controller --clusterrole=cluster-admin
+            kubectl --kubeconfig /etc/kubernetes/admin.conf create secret -n kube-system generic cloud-config --from-literal=cloud.conf="$(cat /etc/kubernetes/cloud-config)" --dry-run -o yaml > /root/cloud-config-secret.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f /root/cloud-config-secret.yaml
+            mkdir -p /root/.kube
+            cp /etc/kubernetes/admin.conf /root/.kube/config
+            chown $(id -u):$(id -g) /root/.kube/config
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-roles.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-role-bindings.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/controller-manager/openstack-cloud-controller-manager-ds.yaml
+          params:
+            $name: { get_param: name }
+            $pod_network_cidr: { get_param: pod_network_cidr }
+            $token: { get_param: kube_token }
+
+  kubeadm_minion_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            until $(curl --output /dev/null --insecure --silent --fail https://$master_ip:6443/healthz); do
+                printf '.'
+                sleep 5
+            done
+            cat <<EOF >/etc/kubernetes/kubeadm.conf
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: JoinConfiguration
+            discovery:
+              bootstrapToken:
+                token: $token
+                unsafeSkipCAVerification: true
+                apiServerEndpoint: $master_ip:6443
+            nodeRegistration:
+              kubeletExtraArgs:
+                hostname-override: $(hostname)
+                cloud-provider: "external"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+            EOF
+            HOSTNAME_OVERRIDE=$(hostname)
+            kubeadm join --config /etc/kubernetes/kubeadm.conf
+          params:
+            $master_ip: { get_attr: [Server_1, first_address]}
+            $token: { get_param: kube_token }
+
+  install_calico:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            cd /root
+            curl https://docs.projectcalico.org/v3.7/manifests/calico.yaml -O
+            sed -i -e "s?192.168.0.0/16?$pod_cidr?g" calico.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f /root/calico.yaml
+          params:
+            $pod_cidr: { get_param: pod_network_cidr }
+
+  install_cinder_csi:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        cd /root
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-attacher-rbac.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-nodeplugin-rbac.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-provisioner-rbac.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-snapshotter-rbac.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf create clusterrolebinding csi-attacher-admin --serviceaccount=kube-system:csi-attacher --clusterrole=cluster-admin
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-nodeplugin-cinderplugin.yaml
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-attacher-cinderplugin.yaml
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-provisioner-cinderplugin.yaml
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-snapshotter-cinderplugin.yaml
+        sed -i 's?containers:?hostNetwork: true\n      containers:?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?containers:?hostNetwork: true\n      containers:?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?containers:?hostNetwork: true\n      containers:?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?latest?v1.14.0?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?latest?v1.14.0?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?latest?v1.14.0?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?latest?v1.14.0?g' csi-nodeplugin-cinderplugin.yaml
+        sed -i 's?1.0.1?1.1.1?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?1.0.1?1.2.0?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?1.0.1?1.2.0?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?1.0.1?1.1.0?g' csi-nodeplugin-cinderplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' csi-nodeplugin-cinderplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' csi-nodeplugin-cinderplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f csi-nodeplugin-cinderplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f csi-attacher-cinderplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f csi-provisioner-cinderplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f csi-snapshotter-cinderplugin.yaml
+
+
+  kube_master_init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: { get_resource: cert_init }
+      - config: { get_resource: docker_init }
+      - config: { get_resource: kube_install }
+      - config: { get_resource: kube_cloud_config }
+      - config: { get_resource: kubeadm_master_init }
+      - config: { get_resource: install_calico }
+      - config: { get_resource: install_cinder_csi }
+
+  kube_minion_init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: { get_resource: cert_init }
+      - config: { get_resource: docker_init }
+      - config: { get_resource: kube_install }
+      - config: { get_resource: kube_cloud_config }
+      - config: { get_resource: kubeadm_minion_init }
+
+outputs:
+  instance_ip:
+    description: Floating IP address of the master node
+    value: { get_attr: [Fip_1, floating_ip_address] }

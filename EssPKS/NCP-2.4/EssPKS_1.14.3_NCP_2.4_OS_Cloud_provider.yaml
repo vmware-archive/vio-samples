@@ -1,0 +1,804 @@
+heat_template_version: "2018-08-31"
+description: "Heat Stack to create an Essential PKS cluster"
+
+parameters:
+  name:
+    type: string
+    label: Cluster Name
+    description: Unique name for this Kubernetes cluster
+  image:
+    type: string
+    label: Image
+    description: Image to use for the Kubernetes cluster nodes
+  availability_zone:
+    type: string
+    label: Availability Zone
+    default: nova
+    description: Availability zone for the Kubernetes cluster nodes
+  key_name:
+    type: string
+    label: Key Name
+    description: Key pair name to use when starting cluster nodes
+  node_count:
+    type: number
+    label: Minion Node Count
+    description: Number of minion nodes to spin up
+  nsx_package_path:
+    type: string
+    label: Path for the NSX package on the image
+    description: Full path for the NSX package zip file on the image supplied
+  mgmt_net_cidr:
+    type: string
+    label: Private Network CIDR
+    description: CIDR for the cluster private network
+    default: "10.0.0.0/24"
+  api_net_cidr:
+    type: string
+    label: Container Network CIDR
+    description: CIDR for the cluster container network
+    default: "11.0.0.0/24"
+  nsx_pod_net_cidr:
+    type: string
+    label: Container Network CIDR
+    description: CIDR for the cluster container network, this is different from the pod_network_cidr below.
+    default: "12.0.0.0/24"
+  public_network:
+    type: string
+    label: Public Network ID
+    description: Name or UUID of the public network
+  pod_network_cidr:
+    type: string
+    label: POD network CIDR
+    default: 192.168.0.0/16
+    description: The POD network cidr, this CIDR will be used to allocate IP addresses to Kubernetes PODS
+  nameserver:
+    type: string
+    label: Nameserver for management network
+    default: 192.168.111.1
+  kube_token:
+    type: string
+    label: Token for kubeadm to join minion nodes
+    default: abcdef.0123456789abcdef
+  nsx_api_manager:
+    type: string
+    label: IP address of the NSX API manager
+  nsx_username:
+    type: string
+    label: Username for the NSX API Manager
+  nsx_password:
+    type: string
+    label: Password for the NSX API Manager
+  tier0_router:
+    type: string
+    label: ID or name of the TIER0 Router
+  overlay_tz:
+    type: string
+    label: ID or Name of the Overlay Transport Zone
+  ip_block:
+    type: string
+    label: UUID or name of the IP block for the POD cidr from NSX, this should match the pod_network_cidr specified above.
+  external_ip_pool:
+    type: string
+    label: Name or UUID of the external ip pool in NSX, this pool is used to allocate external IP addresses for LoadBalancers.
+  os_username:
+    type: string
+    label: Openstack username
+  os_password:
+    type: string
+    label: Openstack password
+  os_tenant_id:
+    type: string
+    label: Openstack tenant id
+  os_domain_id:
+    type: string
+    label: Openstack domain id
+  keystone_ip:
+    type: string
+    label: IP address of the keystone endpoint
+  keystone_hostname:
+    type: string
+    label: Hostname for the keystone endpoint
+  nova_ip:
+    type: string
+    label: IP address of the nova endpoint
+  nova_hostnames:
+    type: string
+    label: Hostname for the nova endpoint
+    description: Space separated hostnames for the nova endpoint
+  cinder_ip:
+    type: string
+    label: IP address of the cinder endpoint
+  cinder_hostnames:
+    type: string
+    label: Hostname for the cinder endpoint
+    description: Space separated hostnames for the cinder endpoint
+
+resources:
+  open_secgroup:
+    type: "OS::Neutron::SecurityGroup"
+    properties:
+      rules:
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+      - direction: ingress
+        ethertype: IPv4
+        protocol: udp
+      - direction: ingress
+        ethertype: IPv4
+        protocol: icmp
+      - direction: egress
+        ethertype: IPv4
+        protocol: tcp
+      - direction: egress
+        ethertype: IPv4
+        protocol: udp
+      - direction: egress
+        ethertype: IPv4
+        protocol: icmp
+
+  k8s_secgroup:
+    type: "OS::Neutron::SecurityGroup"
+    properties:
+      rules:
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 6443
+        port_range_max: 6443
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 2379
+        port_range_max: 2380
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 10250
+        port_range_max: 10255
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 30000
+        port_range_max: 32767
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 22
+        port_range_max: 22
+      description: "Security group for k8s clusters"
+
+  Net_1:
+    type: "OS::Neutron::Net"
+    properties:
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'mgmt']]
+    depends_on:
+    - k8s_secgroup
+  Subnet_1:
+    type: "OS::Neutron::Subnet"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'mgmt-sub']]
+      network: { get_resource: Net_1 }
+      ip_version: 4
+      cidr: { get_param: mgmt_net_cidr }
+      enable_dhcp: true
+      dns_nameservers: [{ get_param: nameserver }]
+    depends_on:
+    - Net_1
+
+  Net_2:
+    type: "OS::Neutron::Net"
+    properties:
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'api']]
+    depends_on:
+    - k8s_secgroup
+  Subnet_2:
+    type: "OS::Neutron::Subnet"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'api-sub']]
+      network: { get_resource: Net_2 }
+      ip_version: 4
+      cidr: { get_param: api_net_cidr }
+      enable_dhcp: true
+    depends_on:
+    - Net_2
+
+  Net_3:
+    type: "OS::Neutron::Net"
+    properties:
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'pod']]
+    depends_on:
+    - k8s_secgroup
+  Subnet_3:
+    type: "OS::Neutron::Subnet"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'pod-sub']]
+      network: { get_resource: Net_3 }
+      ip_version: 4
+      cidr: { get_param: nsx_pod_net_cidr }
+      enable_dhcp: true
+    depends_on:
+    - Net_3
+
+  Server_1_port:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_resource: Net_1 }
+      security_groups: [ get_resource: k8s_secgroup ]
+      fixed_ips:
+      - subnet_id: { get_resource: Subnet_1 }
+    depends_on:
+    - Net_1
+    - Subnet_1
+
+  Server_1_port_2:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_resource: Net_2 }
+      security_groups: [ get_resource: open_secgroup ]
+      fixed_ips:
+      - subnet_id: { get_resource: Subnet_2 }
+    depends_on:
+    - Net_2
+    - Subnet_2
+
+  Server_1_port_3:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_resource: Net_3 }
+      security_groups: [ get_resource: open_secgroup ]
+      fixed_ips:
+      - subnet_id: { get_resource: Subnet_3 }
+    depends_on:
+    - Net_3
+    - Subnet_3
+
+  Server_1:
+    type: "OS::Nova::Server"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'master']]
+      networks:
+      - port: { get_resource: Server_1_port }
+      - port: { get_resource: Server_1_port_2 }
+      - port: { get_resource: Server_1_port_3 }
+      flavor: "m1.medium"
+      image: { get_param: image }
+      availability_zone: { get_param: availability_zone }
+      key_name: { get_param: key_name }
+      user_data_format: RAW
+      user_data:
+        get_resource: kube_master_init
+    depends_on:
+    - Subnet_1
+    - Net_1
+    - Net_2
+    - Subnet_2
+    - k8s_secgroup
+    - Server_1_port
+
+  minion_nodes:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: { get_param: node_count }
+      resource_def:
+        type: "OS::Nova::Server"
+        properties:
+          name:
+            str_replace:
+              template: $name-minion-%index%
+              params:
+                $name: { get_param: name }
+          networks:
+          - network: { get_resource: Net_1 }
+          - network: { get_resource: Net_2 }
+          - network: { get_resource: Net_3 }
+          security_groups: [ get_resource: k8s_secgroup ]
+          flavor: "m1.medium"
+          image: { get_param: image }
+          availability_zone: { get_param: availability_zone }
+          key_name: { get_param: key_name }
+          user_data_format: RAW
+          user_data:
+            get_resource: kube_minion_init
+
+  RouterInterface_1:
+    type: "OS::Neutron::RouterInterface"
+    properties:
+      router: { get_resource: Router_1 }
+      subnet: { get_resource: Subnet_1 }
+
+  RouterInterface_2:
+    type: "OS::Neutron::RouterInterface"
+    properties:
+      router: { get_resource: Router_2 }
+      subnet: { get_resource: Subnet_2 }
+
+  Router_1:
+    type: "OS::Neutron::Router"
+    properties:
+      external_gateway_info:
+        enable_snat: true
+        network: { get_param: public_network }
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'mgmt-router']]
+
+  Router_2:
+    type: "OS::Neutron::Router"
+    properties:
+      external_gateway_info:
+        enable_snat: False
+        network: { get_param: public_network }
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'api-router']]
+
+  Fip_1:
+    type: "OS::Neutron::FloatingIP"
+    properties:
+      floating_network: { get_param: public_network }
+  FipAssociation_1:
+    type: "OS::Neutron::FloatingIPAssociation"
+    properties:
+      floatingip_id: { get_resource: Fip_1 }
+      port_id: { get_resource: Server_1_port }
+
+  cert_init:
+    type: OS::Heat::CloudConfig
+    properties:
+      cloud_config:
+        ca-certs:
+          trusted:
+          - { get_file: nova.crt }
+          - { get_file: cinder.crt }
+
+  set_gateway:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            ifconfig ens32 up
+            dhclient ens32
+            ifconfig ens33 up
+            dhclient ens33
+            route del default gw $api_gateway
+            route del default gw $pod_gateway
+            route add default gw $mgmt_gateway
+          params:
+            $mgmt_gateway: { get_attr: [Subnet_1, gateway_ip]}
+            $api_gateway: { get_attr: [Subnet_2, gateway_ip]}
+            $pod_gateway: { get_attr: [Subnet_3, gateway_ip]}
+
+  ovs_install:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            apt-get update
+            apt-get install -y unzip python-requests jq
+            mkdir -p /tmp/nsx
+            unzip $nsx_path -d /tmp/nsx
+            cd /tmp/nsx
+            mv nsx-container-2.4* nsx-container-2.4
+            cd nsx-container-2.4/OpenvSwitch/xenial_amd64
+            apt-get update
+            dpkg -i *.deb
+            apt-get install -f -y
+            ip addr flush dev ens34
+            mac=$(ifconfig ens34 | grep HWaddr | tr -s " " | cut -d " " -f 5)
+            ovs-vsctl add-br br-int -- set bridge br-int other-config:hwaddr=${mac}
+            ovs-vsctl add-port br-int ens34 -- set Interface ens34 ofport_request=1
+            ifconfig ens34 up
+            dhclient br-int
+            /etc/init.d/openvswitch-switch force-reload-kmod
+          params:
+            $nsx_path: { get_param: nsx_package_path }
+
+  docker_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        apt-get update
+        apt-get install -y docker.io socat ebtables
+        systemctl enable docker.service
+        cd /root
+        curl https://downloads.heptio.com/essential-pks/523a448aa3e9a0ef93ff892dceefee0a/vmware-kubernetes-v1.14.3%2Bvmware.1.tar.gz -o vmware-kubernetes-v1.14.3+vmware.1.tar.gz
+        tar -zxvf vmware-kubernetes-v1.14.3+vmware.1.tar.gz
+        cd /root/vmware-kubernetes-v1.14.3+vmware.1/kubernetes-v1.14.3+vmware.1/images
+        for f in *.gz; do cat $f | docker load; done
+        docker load -i /root/vmware-kubernetes-v1.14.3+vmware.1/coredns-v1.3.1+vmware.1/images/coredns-v1.3.1_vmware.1.tar.gz
+        docker load -i /root/vmware-kubernetes-v1.14.3+vmware.1/etcd-v3.3.10+vmware.1/images/etcd-v3.3.10_vmware.1.tar.gz
+        docker tag vmware/e2e-test:v1.14.3_vmware.1 vmware/e2e-test:v1.14.3
+        docker tag vmware/kube-apiserver:v1.14.3_vmware.1 vmware/kube-apiserver:v1.14.3
+        docker tag vmware/kube-controller-manager:v1.14.3_vmware.1 vmware/kube-controller-manager:v1.14.3
+        docker tag vmware/cloud-controller-manager:v1.14.3_vmware.1 vmware/cloud-controller-manager:v1.14.3
+        docker tag vmware/kube-scheduler:v1.14.3_vmware.1 vmware/kube-scheduler:v1.14.3
+        docker tag vmware/kube-proxy:v1.14.3_vmware.1 vmware/kube-proxy:v1.14.3
+        docker tag vmware/coredns:v1.3.1_vmware.1 vmware/coredns:1.3.1
+        docker tag vmware/etcd:v3.3.10_vmware.1 vmware/etcd:3.3.10
+
+  kube_install:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        swapoff -a
+        cd /root/vmware-kubernetes-v1.14.3+vmware.1/debs
+        dpkg -i *.deb
+        apt-get install -f -y
+        systemctl enable kubelet.service
+
+  kube_cloud_config:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            ip_addr=$(/sbin/ifconfig ens33 | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            cat <<EOF >>/etc/hosts
+            ${ip_addr} $(hostname)
+            $keystone_ip $keystone_hostname
+            $nova_ip $nova_hostnames
+            $cinder_ip $cinder_hostnames
+            EOF
+            cat <<EOF >/etc/kubernetes/cloud-config
+            [Global]
+            username=$os_username
+            password=$os_password
+            auth-url=http://$keystone_hostname/v3
+            tenant-id=$os_tenant_id
+            domain-id=$os_domain_id
+            [BlockStorage]
+            bs-version=v3
+            [Networking]
+            internal-network-name=$internal_network_name
+            [Metadata]
+            search-order=metadataService
+            EOF
+          params:
+            $os_username: { get_param: os_username }
+            $os_password: { get_param: os_password }
+            $os_tenant_id: { get_param: os_tenant_id }
+            $os_domain_id: { get_param: os_domain_id }
+            $keystone_hostname: { get_param: keystone_hostname }
+            $keystone_ip: { get_param: keystone_ip }
+            $nova_hostnames: { get_param: nova_hostnames }
+            $nova_ip: { get_param: nova_ip }
+            $internal_network_name: { list_join: ['-', [{get_param: name}, 'api']] }
+            $cinder_ip: { get_param: cinder_ip }
+            $cinder_hostnames: { get_param: cinder_hostnames }
+
+  kubeadm_master_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            APISERVER_IP_ADDRESS=$(/sbin/ifconfig ens33 | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            cat <<EOF >/etc/kubernetes/kubeadm.conf
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: InitConfiguration
+            bootstrapTokens:
+            - token: "$token"
+              description: "default kubeadm bootstrap token"
+              ttl: "0"
+            nodeRegistration:
+              kubeletExtraArgs:
+                hostname-override: $(hostname)
+                address: ${APISERVER_IP_ADDRESS}
+                healthz-bind-address: ${APISERVER_IP_ADDRESS}
+                node-ip: ${APISERVER_IP_ADDRESS}
+                cloud-provider: "external"
+                allow-privileged: "true"
+            localAPIEndpoint:
+              advertiseAddress: ${APISERVER_IP_ADDRESS}
+              bindPort: 6443
+            ---
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: ClusterConfiguration
+            kubernetesVersion: v1.14.3
+            clusterName: $cluster_name
+            imageRepository: vmware
+            etcd:
+              local:
+                imageRepository: vmware
+            networking:
+              podSubnet: $pod_network_cidr
+            apiServer:
+              extraArgs:
+                runtime-config: storage.k8s.io/v1=true
+                allow-privileged: "true"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+                advertise-address: ${APISERVER_IP_ADDRESS}
+                bind-address: ${APISERVER_IP_ADDRESS}
+                etcd-servers: https://${APISERVER_IP_ADDRESS}:2379
+            controllerManager:
+              extraArgs:
+                bind-address: ${APISERVER_IP_ADDRESS}
+                cloud-provider: "external"
+                cloud-config: /etc/kubernetes/cloud-config
+              extraVolumes:
+              - name: "cloud-config"
+                hostPath: "/etc/kubernetes/cloud-config"
+                mountPath: "/etc/kubernetes/cloud-config"
+                pathType: File
+            scheduler:
+              extraArgs:
+                bind-address: ${APISERVER_IP_ADDRESS}
+            ---
+            apiVersion: kubeproxy.config.k8s.io/v1alpha1
+            kind: KubeProxyConfiguration
+            BindAddress: ${APISERVER_IP_ADDRESS}
+            HealthzBindAddress: ${APISERVER_IP_ADDRESS}
+            MetricsBindAddress: ${APISERVER_IP_ADDRESS}
+            EOF
+            HOSTNAME_OVERRIDE=$(hostname)
+            kubeadm init --config /etc/kubernetes/kubeadm.conf
+            mkdir -p /root/.kube
+            cp -i /etc/kubernetes/admin.conf /root/.kube/config
+            chown $(id -u):$(id -g) /root/.kube/config
+            kubectl --kubeconfig /etc/kubernetes/admin.conf create clusterrolebinding controller-admin --serviceaccount=kube-system:service-controller --clusterrole=cluster-admin
+            kubectl --kubeconfig /etc/kubernetes/admin.conf create secret -n kube-system generic cloud-config --from-literal=cloud.conf="$(cat /etc/kubernetes/cloud-config)" --dry-run -o yaml > /root/cloud-config-secret.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f /root/cloud-config-secret.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-roles.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-role-bindings.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/controller-manager/openstack-cloud-controller-manager-ds.yaml
+          params:
+            $cluster_name: { get_param: name }
+            $pod_network_cidr: { get_param: pod_network_cidr }
+            $token: { get_param: kube_token }
+
+  kubeadm_minion_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            until $(curl --output /dev/null --insecure --silent --fail https://$master_ip:6443/healthz); do
+                printf '.'
+                sleep 5
+            done
+            APISERVER_IP_ADDRESS=$(/sbin/ifconfig ens33 | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            cat <<EOF >/etc/kubernetes/kubeadm.conf
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: JoinConfiguration
+            discovery:
+              bootstrapToken:
+                token: $token
+                unsafeSkipCAVerification: true
+                apiServerEndpoint: $master_ip:6443
+            nodeRegistration:
+              kubeletExtraArgs:
+                hostname-override: $(hostname)
+                address: ${APISERVER_IP_ADDRESS}
+                healthz-bind-address: ${APISERVER_IP_ADDRESS}
+                node-ip: ${APISERVER_IP_ADDRESS}
+                allow-privileged: "true"
+                cloud-provider: "external"
+            EOF
+            HOSTNAME_OVERRIDE=$(hostname)
+            kubeadm join --config /etc/kubernetes/kubeadm.conf
+          params:
+            $master_ip: { get_attr: [Server_1, networks, list_join: ['-', [{get_param: name}, 'api']], 0]}
+            $token: { get_param: kube_token }
+
+  load_ncp:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        UUID=$(curl -s http://169.254.169.254/openstack/2018-08-27/meta_data.json | jq -r .uuid)
+        echo $UUID > /var/lib/cloud/data/instance-id
+        dpkg -i /tmp/nsx/nsx-container-2.4/Kubernetes/ubuntu_amd64/*.deb
+        docker load -i /tmp/nsx/nsx-container-2.4/Kubernetes/nsx-ncp-ubuntu-*.tar
+
+  create_ncp_serviceaccount:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            DOCKER_IMAGE=$(docker images --format "{{.Repository}}" | grep nsx-ncp-ubuntu)
+            kubectl --kubeconfig /etc/kubernetes/admin.conf create clusterrolebinding default-admin --serviceaccount=default:default --clusterrole=cluster-admin
+            sed -i "s?image: nsx-ncp?image: ${DOCKER_IMAGE}:latest?g" /tmp/nsx/nsx-container-2.4/Kubernetes/ubuntu_amd64/nsx-node-agent-ds.yml
+            sed -i "s?image: nsx-ncp?image: ${DOCKER_IMAGE}:latest?g" /tmp/nsx/nsx-container-2.4/Kubernetes/ncp-deployment.yml
+            #sed -i 's?#enable_snat = True?enable_snat = True?g' /tmp/nsx/nsx-container-2.4/Kubernetes/ncp-deployment.yml
+            sed -i 's?#insecure = False?insecure = True?g' /tmp/nsx/nsx-container-2.4/Kubernetes/ncp-deployment.yml
+            sed -i 's?#top_tier_router = <None>?top_tier_router = $tier0_router?g' /tmp/nsx/nsx-container-2.4/Kubernetes/ncp-deployment.yml
+            sed -i 's?#overlay_tz = <None>?overlay_tz = $overlay_tz?g' /tmp/nsx/nsx-container-2.4/Kubernetes/ncp-deployment.yml
+            sed -i 's?#use_native_loadbalancer = False?use_native_loadbalancer = True?g' /tmp/nsx/nsx-container-2.4/Kubernetes/ncp-deployment.yml
+            sed -i 's?#container_ip_blocks = <None>?container_ip_blocks = $ip_block?g' /tmp/nsx/nsx-container-2.4/Kubernetes/ncp-deployment.yml
+            sed -i 's?#external_ip_pools_lb = <None>?external_ip_pools_lb = $external_ip_pool?g' /tmp/nsx/nsx-container-2.4/Kubernetes/ncp-deployment.yml
+            sed -i 's?#nsx_api_managers = <ip_address>?nsx_api_managers = $nsx_api_manager\n    nsx_api_user = $nsx_username\n    nsx_api_password = $nsx_password?g' /tmp/nsx/nsx-container-2.4/Kubernetes/ncp-deployment.yml
+
+            cat <<EOF >>/tmp/nsx/nsx-container-2.4/Kubernetes/ubuntu_amd64/nsx-node-agent-ds.yml
+                  tolerations:
+                  - effect: NoSchedule
+                    operator: Exists
+            EOF
+          params:
+            $nsx_api_manager: { get_param: nsx_api_manager }
+            $tier0_router: { get_param: tier0_router }
+            $overlay_tz: { get_param: overlay_tz }
+            $ip_block: { get_param: ip_block }
+            $nsx_username: { get_param: nsx_username }
+            $nsx_password: { get_param: nsx_password }
+            $external_ip_pool: { get_param: external_ip_pool }
+
+  tag_ncp_ports:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+
+            cat <<EOF >/root/tag_nsx_ports.py
+            #!/usr/bin/python
+            import json
+            import requests
+            import os
+
+            URL = "https://$nsx_api_manager/api/v1/logical-ports"
+            USERNAME = "$nsx_username"
+            PASSWORD = "$nsx_password"
+            CLUSTER_NAME = "$cluster_name"
+            IP_ADDRESS = os.environ['POD_IP_ADDRESS']
+            HOSTNAME = os.environ['HOSTNAME']
+
+            response = requests.get(URL, verify=False, auth=(USERNAME, PASSWORD))
+
+            ports = json.loads(response.text)
+
+            for port in ports['results']:
+              for ip in port['address_bindings']:
+                if ip['ip_address'] == IP_ADDRESS:
+                  print "\nUpdating Port Tags\n"
+                  port['tags'].append({'scope': 'ncp/cluster', 'tag': CLUSTER_NAME})
+                  port['tags'].append({'scope': 'ncp/node_name', 'tag': HOSTNAME})
+                  data = {'tags': port['tags'], 'logical_switch_id': port['logical_switch_id'],
+                          'admin_state': port['admin_state'], '_revision': port['_revision'],
+                          'attachment': port['attachment'], 'display_name': port['display_name']}
+                  port_url = URL + '/' + port['id']
+                  t = requests.put(port_url, verify=False, auth=(USERNAME, PASSWORD),
+                                   json=data)
+                  print t.text
+            EOF
+
+            export POD_IP_ADDRESS=$(/sbin/ifconfig br-int | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            export HOSTNAME=$(hostname)
+            python /root/tag_nsx_ports.py
+            ip route add $pod_cidr via $gateway_ip
+          params:
+            $nsx_api_manager: { get_param: nsx_api_manager }
+            $nsx_username: { get_param: nsx_username }
+            $nsx_password: { get_param: nsx_password }
+            $cluster_name: { get_param: name }
+            $pod_cidr: { get_param: pod_network_cidr }
+            $gateway_ip: { get_attr: [Subnet_2, gateway_ip]}
+
+  start_ncp_pods:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        cd /tmp/nsx/nsx-container-2.4/Kubernetes
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f ubuntu_amd64/nsx-node-agent-ds.yml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f ncp-deployment.yml
+
+  install_cinder_csi:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        cd /root
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-attacher-rbac.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-nodeplugin-rbac.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-provisioner-rbac.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-snapshotter-rbac.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf create clusterrolebinding csi-attacher-admin --serviceaccount=kube-system:csi-attacher --clusterrole=cluster-admin
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-nodeplugin-cinderplugin.yaml
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-attacher-cinderplugin.yaml
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-provisioner-cinderplugin.yaml
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/cinder-csi-plugin/csi-snapshotter-cinderplugin.yaml
+        sed -i 's?containers:?hostNetwork: true\n      containers:?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?containers:?hostNetwork: true\n      containers:?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?containers:?hostNetwork: true\n      containers:?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?latest?v1.14.0?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?latest?v1.14.0?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?latest?v1.14.0?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?latest?v1.14.0?g' csi-nodeplugin-cinderplugin.yaml
+        sed -i 's?1.0.1?1.1.1?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?1.0.1?1.2.0?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?1.0.1?1.2.0?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?1.0.1?1.1.0?g' csi-nodeplugin-cinderplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' csi-nodeplugin-cinderplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' csi-attacher-cinderplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' csi-provisioner-cinderplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' csi-snapshotter-cinderplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' csi-nodeplugin-cinderplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f csi-nodeplugin-cinderplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f csi-attacher-cinderplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f csi-provisioner-cinderplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f csi-snapshotter-cinderplugin.yaml
+
+  get_nsx_cert:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/usr/bin/python
+            import json
+            import requests
+
+            URL = "https://$nsx_api_manager/api/v1/trust-management/certificates"
+            USERNAME = "$nsx_username"
+            PASSWORD = "$nsx_password"
+
+            response = requests.get(URL, verify=False, auth=(USERNAME, PASSWORD))
+
+            certs = json.loads(response.text)
+            for cert in certs['results']:
+              for used_by in cert['used_by']:
+                if "API" in used_by['service_types']:
+                  FH = open('/tmp/nsx_api_cert.pem', 'w')
+                  FH.write(cert['pem_encoded'])
+                  FH.close()
+          params:
+            $nsx_api_manager: { get_param: nsx_api_manager }
+            $nsx_username: { get_param: nsx_username }
+            $nsx_password: { get_param: nsx_password }
+
+  kube_master_init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: { get_resource: cert_init }
+      - config: { get_resource: set_gateway }
+      - config: { get_resource: ovs_install }
+      - config: { get_resource: docker_init }
+      - config: { get_resource: kube_install }
+      - config: { get_resource: kube_cloud_config }
+      - config: { get_resource: kubeadm_master_init }
+      - config: { get_resource: load_ncp }
+      - config: { get_resource: create_ncp_serviceaccount }
+      - config: { get_resource: tag_ncp_ports }
+      - config: { get_resource: start_ncp_pods }
+      - config: { get_resource: install_cinder_csi }
+
+  kube_minion_init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: { get_resource: cert_init }
+      - config: { get_resource: set_gateway }
+      - config: { get_resource: ovs_install }
+      - config: { get_resource: docker_init }
+      - config: { get_resource: kube_install }
+      - config: { get_resource: kube_cloud_config }
+      - config: { get_resource: kubeadm_minion_init }
+      - config: { get_resource: load_ncp }
+      - config: { get_resource: tag_ncp_ports }
