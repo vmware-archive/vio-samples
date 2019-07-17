@@ -369,10 +369,24 @@ resources:
         str_replace:
           template: |
             #!/bin/bash
-            ifconfig ens32 up
-            dhclient ens32
-            ifconfig ens33 up
-            dhclient ens33
+            for intf in /sys/class/net/ens*; do
+                ifconfig `basename $intf` up
+                dhclient `basename $intf`
+            done
+            API_SUBNET=$(echo $api_gateway | cut -d"." -f1-3)
+            POD_SUBNET=$(echo $pod_gateway | cut -d"." -f1-3)
+            ip -br -4 addr | while read -r line; do
+                if [[ $line =~ ${API_SUBNET} ]]
+                then
+                    intf=($line)
+                    echo ${intf} > /root/api_intf
+                fi
+                if [[ $line =~ ${POD_SUBNET} ]]
+                then
+                    intf=($line)
+                    echo ${intf} > /root/pod_intf
+                fi
+            done
             route del default gw $api_gateway
             route del default gw $pod_gateway
             route add default gw $mgmt_gateway
@@ -398,11 +412,12 @@ resources:
             apt-get update
             dpkg -i *.deb
             apt-get install -f -y
-            ip addr flush dev ens34
-            mac=$(ifconfig ens34 | grep HWaddr | tr -s " " | cut -d " " -f 5)
+            POD_INTF=$(cat /root/pod_intf)
+            ip addr flush dev ${POD_INTF}
+            mac=$(ifconfig  ${POD_INTF} | grep HWaddr | tr -s " " | cut -d " " -f 5)
             ovs-vsctl add-br br-int -- set bridge br-int other-config:hwaddr=${mac}
-            ovs-vsctl add-port br-int ens34 -- set Interface ens34 ofport_request=1
-            ifconfig ens34 up
+            ovs-vsctl add-port br-int ${POD_INTF} -- set Interface ${POD_INTF} ofport_request=1
+            ifconfig ${POD_INTF} up
             dhclient br-int
             /etc/init.d/openvswitch-switch force-reload-kmod
           params:
@@ -450,7 +465,8 @@ resources:
         str_replace:
           template: |
             #!/bin/bash
-            ip_addr=$(/sbin/ifconfig ens33 | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            API_INTF=$(cat /root/api_intf)
+            ip_addr=$(/sbin/ifconfig ${API_INTF} | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
             cat <<EOF >>/etc/hosts
             ${ip_addr} $(hostname)
             $keystone_ip $keystone_hostname
@@ -491,7 +507,8 @@ resources:
         str_replace:
           template: |
             #!/bin/bash
-            APISERVER_IP_ADDRESS=$(/sbin/ifconfig ens33 | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            API_INTF=$(cat /root/api_intf)
+            APISERVER_IP_ADDRESS=$(/sbin/ifconfig ${API_INTF} | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
             cat <<EOF >/etc/kubernetes/kubeadm.conf
             apiVersion: kubeadm.k8s.io/v1beta1
             kind: InitConfiguration
@@ -576,7 +593,8 @@ resources:
                 printf '.'
                 sleep 5
             done
-            APISERVER_IP_ADDRESS=$(/sbin/ifconfig ens33 | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            API_INTF=$(cat /root/api_intf)
+            APISERVER_IP_ADDRESS=$(/sbin/ifconfig ${API_INTF} | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
             cat <<EOF >/etc/kubernetes/kubeadm.conf
             apiVersion: kubeadm.k8s.io/v1beta1
             kind: JoinConfiguration
