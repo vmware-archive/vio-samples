@@ -11,14 +11,12 @@ i.e. 4 vCPUs, 8 GB memory and 80Gb storage total.
 General Architecture
 --------------------
 
-![](media/image1.png){width="6.746835083114611in"
-height="6.83033573928259in"}
+![](../media/VIO%20NCP%20container%20solution.png)
 
 Setup Neutron Networking
 ------------------------
 
-![](media/image2.png){width="6.569620516185477in"
-height="6.1388254593175855in"}
+![](../media/VIO%20NCP%20Network%20diagram.png)
 
 a.  ### Create a management Network
 
@@ -105,48 +103,45 @@ c.  ### Copy each package to all the nodes.
 
 d.  ### Install dependent packages
 
-    \# apt-get install -y docker.io swapoff
+    # apt-get install -y docker.io swapoff
 
-    \# systemctl enable docker.service
+    # systemctl enable docker.service
 
 e.  ### On each node issue the following commands (as root):
 
-    \# tar -zxvf vmware-kubernetes-v1.14.0+vmware.1.tar.gz
+    # tar -zxvf vmware-kubernetes-v1.14.0+vmware.1.tar.gz
 
-    \# for f in
-    vmware-kubernetes-v1.14.0+vmware.1/kubernetes-v1.14.0+vmware.1/images/\*.gz;
-    do cat \$f \| docker load; done
+    # for f in vmware-kubernetes-v1.14.0+vmware.1/kubernetes-v1.14.0+vmware.1/images/*.gz;
+    do cat $f | docker load; done
+    # swapoff -a
 
-    \# swapoff -a
+    # dpkg -i vmware-kubernetes-v1.14.0+vmware.1/debs /\*.deb
 
-    \# dpkg -i vmware-kubernetes-v1.14.0+vmware.1/debs /\*.deb
+    # apt-get install -f
 
-    \# apt-get install -f
+    # cd vmware-kubernetes-v1.14.0+vmware.1/kubernetes-v1.14.0+vmware.1/executables/
 
-    \# cd
-    vmware-kubernetes-v1.14.0+vmware.1/kubernetes-v1.14.0+vmware.1/executables/
+    # gunzip -c kubeadm-linux-v1.14.0+vmware.1.gz \> /usr/bin/kubeadm
 
-    \# gunzip -c kubeadm-linux-v1.14.0+vmware.1.gz \> /usr/bin/kubeadm
+    # gunzip -c kubectl-linux-v1.14.0+vmware.1.gz \> /usr/bin/kubectl
 
-    \# gunzip -c kubectl-linux-v1.14.0+vmware.1.gz \> /usr/bin/kubectl
+    # gunzip -c kubelet-linux-v1.14.0+vmware.1.gz \> /usr/bin/kubelet
 
-    \# gunzip -c kubelet-linux-v1.14.0+vmware.1.gz \> /usr/bin/kubelet
-
-    \# chmod +x /usr/bin/{kubeadm,kubelet,kubectl}
+    # chmod +x /usr/bin/{kubeadm,kubelet,kubectl}
 
 If you are using NSX/NCP then do the following steps:
 -----------------------------------------------------
 
 a.  ### Install NCP
 
-    \# unzip nsx-container-2.4.1.13515827.zip
+    # unzip nsx-container-2.4.1.13515827.zip
 
-    \# dpkg -i
+    # dpkg -i
     nsx-container-2.4.1.13515827/OpenvSwitch/xenial\_amd64/\*.deb
 
-    \# apt-get install -f -y
+    # apt-get install -f -y
 
-    \# systemctl enable openvswitch-switch.service
+    # systemctl enable openvswitch-switch.service
 
 b.  ### Setup NCP resources and OVS
 
@@ -162,16 +157,16 @@ c.  ### Set the bridge interface's MAC address to the same as the external inter
 
         iface br-int inet dhcp
 
-        ovs\_type OVSBridge
+        ovs_type OVSBridge
 
-        ovs\_ports ens33
+        ovs_ports ens33
 
-        ovs\_extra set bridge \${IFACE} other-config:hwaddr=\$(ifconfig
-        ens33 \| grep HWaddr \| tr -s \" \" \| cut -d \" \" -f 5)
+        ovs_extra set bridge ${IFACE} other-config:hwaddr=$(ifconfig
+        ens33 | grep HWaddr | tr -s " " | cut -d " " -f 5)
 
     b.  Restart networking
 
-        \# service networking restart
+        # service networking restart
 
 Start all services
 ------------------
@@ -309,100 +304,79 @@ cinder\_hostnames: cinder.vio.local cinder.openstack.svc.cluster.local
 
 **Details on all the parameter options**:
 
-+-----------------------------------+-----------------------------------+
-| image                             | Name of the snapshot image        |
-|                                   | containing the NCP package.       |
-+===================================+===================================+
-| key\_name                         | Name of the keypair to use for    |
-|                                   | the Kubernetes nodes              |
-+-----------------------------------+-----------------------------------+
-| public\_network                   | Name of the public network        |
-+-----------------------------------+-----------------------------------+
-| name                              | A unique name for the Kubernetes  |
-|                                   | cluster, your node names will be  |
-|                                   | derived with this name and the    |
-|                                   | NCP ports will be tagged with it  |
-|                                   | as well.                          |
-+-----------------------------------+-----------------------------------+
-| node\_count                       | Number of minion nodes to create. |
-|                                   | Currently this solution is        |
-|                                   | limited to a single master node.  |
-+-----------------------------------+-----------------------------------+
-| nsx\_package\_path                | Path to the nsx package zip file  |
-|                                   | on the image. This should be a    |
-|                                   | complete filepath.                |
-+-----------------------------------+-----------------------------------+
-| mgmt\_net\_cidr                   | CIDR for the management network.  |
-+-----------------------------------+-----------------------------------+
-| api\_net\_cidr                    | CIDR for the API network          |
-+-----------------------------------+-----------------------------------+
-| nsx\_pod\_net\_cidr               | CIDR for the POD network. This is |
-|                                   | the network that is used for POD  |
-|                                   | communications, POD IPs           |
-|                                   | themselves are assigned out of    |
-|                                   | the pod\_network\_cidr.           |
-+-----------------------------------+-----------------------------------+
-| pod\_network\_cidr                | CIDR for the Kubernetes POD IPs.  |
-+-----------------------------------+-----------------------------------+
-| nameserver                        | Nameserver IP to use when         |
-|                                   | creating networks and subnets.    |
-+-----------------------------------+-----------------------------------+
-| kube\_token                       | A kubeadm token to initialize the |
-|                                   | master node with. The minions     |
-|                                   | will use this token to join the   |
-|                                   | cluster. This needs to be of the  |
-|                                   | format:                           |
-|                                   |                                   |
-|                                   | \[a-zA-Z\]{6}.\[a-zA-Z0-9\]{16}   |
-+-----------------------------------+-----------------------------------+
-| nsx\_api\_manager                 | IP address of the NSX API manager |
-+-----------------------------------+-----------------------------------+
-| nsx\_username                     | Username for the NSX API manager  |
-+-----------------------------------+-----------------------------------+
-| nsx\_password                     | Password for the NSX API manager  |
-+-----------------------------------+-----------------------------------+
-| tier0\_router                     | Name or UUID of the TIER0 router  |
-|                                   | for POD networking.               |
-+-----------------------------------+-----------------------------------+
-| overlay\_tz                       | Name or UUID of the overlay       |
-|                                   | transport zone to use for the POD |
-|                                   | networks.                         |
-+-----------------------------------+-----------------------------------+
-| ip\_block                         | Name or UUID of the POD CIDR IP   |
-|                                   | block from NSX                    |
-+-----------------------------------+-----------------------------------+
-| external\_ip\_pool                | Name or UUID of the External IP   |
-|                                   | pool from NSX. This pool is used  |
-|                                   | to assign external IP addresses   |
-|                                   | for LoadBalancer type services.   |
-+-----------------------------------+-----------------------------------+
-| os\_username                      | Openstack username                |
-+-----------------------------------+-----------------------------------+
-| os\_password                      | Openstack password                |
-+-----------------------------------+-----------------------------------+
-| os\_tenant\_id                    | Openstack Tenant ID               |
-+-----------------------------------+-----------------------------------+
-| os\_domain\_id                    | Openstack Domain ID               |
-+-----------------------------------+-----------------------------------+
-| keystone\_ip                      | IP address of the keystone        |
-|                                   | endpoint                          |
-+-----------------------------------+-----------------------------------+
-| keystone\_hostname                | Hostname of the keystone endpoint |
-+-----------------------------------+-----------------------------------+
-| nova\_ip                          | IP address of the nova endpoint   |
-+-----------------------------------+-----------------------------------+
-| nova\_hostname                    | Hostname(s) of the nova endpoint  |
-+-----------------------------------+-----------------------------------+
-| cinder\_ip                        | IP address of the cinder endpoint |
-+-----------------------------------+-----------------------------------+
-| cinder\_hostname                  | Hostname(s) of the cinder         |
-|                                   | endpoint                          |
-+-----------------------------------+-----------------------------------+
+***If you have IP Access disabled (not common) use these parameters*** 
+
+| Parameter                         | value                             |
+| --------------------------------- |:---------------------------------:|
+| image | Name of the snapshot image containing the NCP package.|
+| key_name | Name of the keypair to use for the Kubernetes nodes.|
+| public_network | Name of the public network.|
+| name | A unique name for the Kubernetes cluster, your node names will be derived with this name and the  NCP ports will be tagged with it as well.|
+| node_count | Number of minion nodes to create. Currently this solution is limited to a single master node.|
+| nsx\_package_path | Path to the nsx package zip file on the image. This should be a complete filepath.|
+| mgmt\_net\_cidr | CIDR for the management network.|
+| api\_net\_cidr | CIDR for the API network.|
+| nsx\_pod\_net\_cidr  | CIDR for the POD network. This is the network that is used for POD communications, POD IPs themselves are assigned out of the pod\_network\_cidr.|
+| pod\_network\_cidr | CIDR for the Kubernetes POD IPs.|
+| nameserver | Nameserver IP to use when creating networks and subnets.|
+| kube\_token   | A kubeadm token to initialize the master node with. The minions will use this token to join the cluster. This needs to be of the format: \[a-zA-Z\]{6}.\[a-zA-Z0-9\]{16}|
+| nsx\_api\_manager | IP address of the NSX API manager.|
+| nsx\_username | Username for the NSX API manager.|
+| nsx\_password | Password for the NSX API manager.|
+| tier0\_router | Name or UUID of the TIER0 router for POD networking.|
+| overlay\_tz | Name or UUID of the overlay transport zone to use for the POD networks.|
+| ip\_block | Name or UUID of the POD CIDR IP block from NSX.|
+| external\_ip\_pool | Name or UUID of the External IP pool from NSX. This pool is used to assign external IP addresses for LoadBalancer type services.|
+| os\_username | Openstack username.|
+| os\_password | Openstack password.|
+| os\_tenant\_id | Openstack Tenant ID.|
+| os\_domain\_id | Openstack Domain ID.|
+| keystone\_ip  | IP address of the keystone endpoint.|
+| keystone\_hostname | Hostname of the keystone endpoint.|
+| nova\_ip | IP address of the nova endpoint.|
+| nova\_hostname | Hostname(s) of the nova endpoint.|
+| cinder\_ip | IP address of the cinder endpoint.|
+| cinder\_hostname  | Hostname(s) of the cinder endpoint.|
+
 
 ***\*Copy the downloaded HEAT stack, the parameter file and the nova and
 cinder certificates to a common directory. The stack assumes files
 called nova.crt and cinder.crt are in the same directory as the stack
 file itself. \****
+
+***If you have IP Access enabled (default VIO) use these parameters*** 
+
+| Parameter                         | value                             |
+| --------------------------------- |:---------------------------------:|
+| image | Name of the snapshot image containing the NCP package.|
+| key_name | Name of the keypair to use for the Kubernetes nodes.|
+| public_network | Name of the public network.|
+| name | A unique name for the Kubernetes cluster, your node names will be derived with this name and the  NCP ports will be tagged with it as well.|
+| node_count | Number of minion nodes to create. Currently this solution is limited to a single master node.|
+| nsx\_package_path | Path to the nsx package zip file on the image. This should be a complete filepath.|
+| mgmt\_net\_cidr | CIDR for the management network.|
+| api\_net\_cidr | CIDR for the API network.|
+| nsx\_pod\_net\_cidr  | CIDR for the POD network. This is the network that is used for POD communications, POD IPs themselves are assigned out of the pod\_network\_cidr.|
+| pod\_network\_cidr | CIDR for the Kubernetes POD IPs.|
+| nameserver | Nameserver IP to use when creating networks and subnets.|
+| kube\_token   | A kubeadm token to initialize the master node with. The minions will use this token to join the cluster. This needs to be of the format: \[a-zA-Z\]{6}.\[a-zA-Z0-9\]{16}|
+| nsx\_api\_manager | IP address of the NSX API manager.|
+| nsx\_username | Username for the NSX API manager.|
+| nsx\_password | Password for the NSX API manager.|
+| tier0\_router | Name or UUID of the TIER0 router for POD networking.|
+| overlay\_tz | Name or UUID of the overlay transport zone to use for the POD networks.|
+| ip\_block | Name or UUID of the POD CIDR IP block from NSX.|
+| external\_ip\_pool | Name or UUID of the External IP pool from NSX. This pool is used to assign external IP addresses for LoadBalancer type services.|
+| os\_username | Openstack username.|
+| os\_password | Openstack password.|
+| os\_tenant\_id | Openstack Tenant ID.|
+| os\_domain\_id | Openstack Domain ID.|
+| keystone\_ip  | IP address of the keystone endpoint.|
+
+***NOTE: you do not need to supply any hostnames or certificates when IP access is enabled, the HEAT stack will download a certificate.***
+
+***NOTE: The openstack cloud provider uses Public endpoints to communicate with Nova and Neutron, your VM's will need to be able to reach 
+         the public endpoints forn these services***
 
 **Create the HEAT stack with**:
 
