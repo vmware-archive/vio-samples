@@ -1,0 +1,42 @@
+heat_template_version: "2018-08-31"
+
+params:
+  nsx_api_manager:
+    type: string
+  nsx_username:
+    type: string
+  nsx_password:
+    type: string
+
+resources:
+  get_nsx_cert:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/usr/bin/python
+            import json
+            import requests
+
+            URL = "https://$nsx_api_manager/api/v1/trust-management/certificates"
+            USERNAME = "$nsx_username"
+            PASSWORD = "$nsx_password"
+
+            response = requests.get(URL, verify=False, auth=(USERNAME, PASSWORD))
+
+            certs = json.loads(response.text)
+            for cert in certs['results']:
+              for used_by in cert['used_by']:
+                if "API" in used_by['service_types']:
+                  FH = open('/tmp/nsx_api_cert.pem', 'w')
+                  FH.write(cert['pem_encoded'])
+                  FH.close()
+          params:
+            $nsx_api_manager: { get_param: nsx_api_manager }
+            $nsx_username: { get_param: nsx_username }
+            $nsx_password: { get_param: nsx_password }
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: get_nsx_cert }

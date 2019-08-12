@@ -95,6 +95,23 @@ parameters:
   keystone_ip:
     type: string
     label: IP address of the keystone endpoint
+  keystone_hostname:
+    type: string
+    label: Hostname for the keystone endpoint
+  nova_ip:
+    type: string
+    label: IP address of the nova endpoint
+  nova_hostnames:
+    type: string
+    label: Hostname for the nova endpoint
+    description: Space separated hostnames for the nova endpoint
+  cinder_ip:
+    type: string
+    label: IP address of the cinder endpoint
+  cinder_hostnames:
+    type: string
+    label: Hostname for the cinder endpoint
+    description: Space separated hostnames for the cinder endpoint
 
 resources:
   k8s_secgroup:
@@ -266,14 +283,22 @@ resources:
           user_data:
             get_resource: kube_minion_init
 
+  cert_init:
+    type: ../lib/os_cert_init.yaml
+
   kube_cloud_config:
-    type: ../lib/kube_cloud_config_ncp_ip_access.yaml
+    type: ../lib/kube_cloud_config_ncp_ingress.yaml
     properties:
       os_username: { get_param: os_username }
       os_password: { get_param: os_password }
       os_tenant_id: { get_param: os_tenant_id }
       os_domain_id: { get_param: os_domain_id }
       keystone_ip: { get_param: keystone_ip }
+      keystone_hostname: { get_param: keystone_hostname }
+      nova_hostnames: { get_param: nova_hostnames }
+      nova_ip: { get_param: nova_ip }
+      cinder_ip: { get_param: cinder_ip }
+      cinder_hostnames: { get_param: cinder_hostnames }
       internal_network_name: { list_join: ['-', [{get_param: name}, 'api']] }
 
   set_gateway:
@@ -341,6 +366,7 @@ resources:
     type: OS::Heat::MultipartMime
     properties:
       parts:
+      - config: { get_resource: cert_init }
       - config: { get_resource: set_gateway }
       - config: { get_resource: ovs_install }
       - config: { get_resource: docker_init }
@@ -357,6 +383,7 @@ resources:
     type: OS::Heat::MultipartMime
     properties:
       parts:
+      - config: { get_resource: cert_init }
       - config: { get_resource: set_gateway }
       - config: { get_resource: ovs_install }
       - config: { get_resource: docker_init }

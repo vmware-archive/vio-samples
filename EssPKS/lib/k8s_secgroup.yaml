@@ -1,0 +1,38 @@
+heat_template_version: "2018-08-31"
+description: "Heat Stack for a Kubernetes security group"
+
+resources:
+  k8s_secgroup:
+    type: "OS::Neutron::SecurityGroup"
+    properties:
+      rules:
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 6443
+        port_range_max: 6443
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 2379
+        port_range_max: 2380
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 10250
+        port_range_max: 10255
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 30000
+        port_range_max: 32767
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 22
+        port_range_max: 22
+      description: "Security group for k8s clusters"
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: k8s_secgroup }

@@ -1,0 +1,16 @@
+heat_template_version: "2018-08-31"
+
+resources:
+  load_ncp:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        UUID=$(curl -s http://169.254.169.254/openstack/2018-08-27/meta_data.json | jq -r .uuid)
+        echo $UUID > /var/lib/cloud/data/instance-id
+        dpkg -i /tmp/nsx/nsx-container-2.4/Kubernetes/ubuntu_amd64/*.deb
+        docker load -i /tmp/nsx/nsx-container-2.4/Kubernetes/nsx-ncp-ubuntu-*.tar
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: load_ncp }

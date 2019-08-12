@@ -1,0 +1,30 @@
+heat_template_version: "2018-08-31"
+description: "Heat Stack for an all open security group"
+
+resources:
+  open_secgroup:
+    type: "OS::Neutron::SecurityGroup"
+    properties:
+      rules:
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+      - direction: ingress
+        ethertype: IPv4
+        protocol: udp
+      - direction: ingress
+        ethertype: IPv4
+        protocol: icmp
+      - direction: egress
+        ethertype: IPv4
+        protocol: tcp
+      - direction: egress
+        ethertype: IPv4
+        protocol: udp
+      - direction: egress
+        ethertype: IPv4
+        protocol: icmp
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: open_secgroup }

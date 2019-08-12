@@ -1,0 +1,100 @@
+heat_template_version: "2018-08-31"
+description: "Set proper default gateway for a NCP stack"
+
+parameters:
+  cluster_name:
+    type: string
+  pod_network_cidr:
+    type: string
+  kube_token:
+    type: string
+
+resources:
+  kubeadm_master_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            API_INTF=$(cat /root/api_intf)
+            APISERVER_IP_ADDRESS=$(/sbin/ifconfig ${API_INTF} | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            cat <<EOF >/etc/kubernetes/kubeadm.conf
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: InitConfiguration
+            bootstrapTokens:
+            - token: "$token"
+              description: "default kubeadm bootstrap token"
+              ttl: "0"
+            nodeRegistration:
+              kubeletExtraArgs:
+                hostname-override: $(hostname)
+                address: ${APISERVER_IP_ADDRESS}
+                healthz-bind-address: ${APISERVER_IP_ADDRESS}
+                node-ip: ${APISERVER_IP_ADDRESS}
+                cloud-provider: "external"
+                allow-privileged: "true"
+            localAPIEndpoint:
+              advertiseAddress: ${APISERVER_IP_ADDRESS}
+              bindPort: 6443
+            ---
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: ClusterConfiguration
+            kubernetesVersion: v1.14.3
+            clusterName: $cluster_name
+            imageRepository: vmware
+            etcd:
+              local:
+                imageRepository: vmware
+            networking:
+              podSubnet: $pod_network_cidr
+            apiServer:
+              extraArgs:
+                runtime-config: storage.k8s.io/v1=true
+                allow-privileged: "true"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+                advertise-address: ${APISERVER_IP_ADDRESS}
+                bind-address: ${APISERVER_IP_ADDRESS}
+                etcd-servers: https://${APISERVER_IP_ADDRESS}:2379
+            controllerManager:
+              extraArgs:
+                bind-address: ${APISERVER_IP_ADDRESS}
+                cloud-provider: "external"
+                cloud-config: /etc/kubernetes/cloud-config
+              extraVolumes:
+              - name: "cloud-config"
+                hostPath: "/etc/kubernetes/cloud-config"
+                mountPath: "/etc/kubernetes/cloud-config"
+                pathType: File
+            scheduler:
+              extraArgs:
+                bind-address: ${APISERVER_IP_ADDRESS}
+            ---
+            apiVersion: kubeproxy.config.k8s.io/v1alpha1
+            kind: KubeProxyConfiguration
+            BindAddress: ${APISERVER_IP_ADDRESS}
+            HealthzBindAddress: ${APISERVER_IP_ADDRESS}
+            MetricsBindAddress: ${APISERVER_IP_ADDRESS}
+            EOF
+            HOSTNAME_OVERRIDE=$(hostname)
+            kubeadm init --config /etc/kubernetes/kubeadm.conf
+            mkdir -p /root/.kube
+            cp -i /etc/kubernetes/admin.conf /root/.kube/config
+            chown $(id -u):$(id -g) /root/.kube/config
+            kubectl --kubeconfig /etc/kubernetes/admin.conf create clusterrolebinding controller-admin --serviceaccount=kube-system:service-controller --clusterrole=cluster-admin
+            kubectl --kubeconfig /etc/kubernetes/admin.conf create secret -n kube-system generic cloud-config --from-literal=cloud.conf="$(cat /etc/kubernetes/cloud-config)" --dry-run -o yaml > /root/cloud-config-secret.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f /root/cloud-config-secret.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-roles.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-role-bindings.yaml
+            curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/controller-manager/openstack-cloud-controller-manager-ds.yaml
+            sed -i 's?- --v=1?- --v=4?g' openstack-cloud-controller-manager-ds.yaml
+            sed -i 's?latest?v1.14.0?g' openstack-cloud-controller-manager-ds.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f openstack-cloud-controller-manager-ds.yaml
+          params:
+            $cluster_name: { get_param: cluster_name }
+            $pod_network_cidr: { get_param: pod_network_cidr }
+            $token: { get_param: kube_token }
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: kubeadm_master_init }

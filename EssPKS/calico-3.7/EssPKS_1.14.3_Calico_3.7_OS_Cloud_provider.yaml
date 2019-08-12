@@ -325,7 +325,6 @@ resources:
             floating-subnet-id=$lb_subnet_id
             lb-version=v2
             EOF
-            #sed -i -e "s?KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig?KUBELET_KUBECONFIG_ARGS=--cloud-provider=external --bootstrap-kubeconfig?" /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
           params:
             $token: { get_param: kube_token }
             $os_username: { get_param: os_username }

@@ -1,0 +1,48 @@
+heat_template_version: "2018-08-31"
+description: "Set proper default gateway for a NCP stack"
+
+parameters:
+  mgmt_gateway:
+    type: string
+  api_gateway:
+    type: string
+  pod_gateway:
+    type: string
+
+resources:
+  set_gateway:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            for intf in /sys/class/net/ens*; do
+                ifconfig `basename $intf` up
+                dhclient `basename $intf`
+            done
+            API_SUBNET=$(echo $api_gateway | cut -d"." -f1-3)
+            POD_SUBNET=$(echo $pod_gateway | cut -d"." -f1-3)
+            ip -br -4 addr | while read -r line; do
+                if [[ $line =~ ${API_SUBNET} ]]
+                then
+                    intf=($line)
+                    echo ${intf} > /root/api_intf
+                fi
+                if [[ $line =~ ${POD_SUBNET} ]]
+                then
+                    intf=($line)
+                    echo ${intf} > /root/pod_intf
+                fi
+            done
+            route del default gw $api_gateway
+            route del default gw $pod_gateway
+            route add default gw $mgmt_gateway
+          params:
+            $mgmt_gateway: { get_param: mgmt_gateway }
+            $api_gateway: { get_param: api_gateway }
+            $pod_gateway: { get_param: pod_gateway }
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: set_gateway }

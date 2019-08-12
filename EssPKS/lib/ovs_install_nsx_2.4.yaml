@@ -1,0 +1,38 @@
+heat_template_version: "2018-08-31"
+
+parameters:
+  nsx_package_path:
+    type: string
+
+resources:
+  ovs_install:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            apt-get update
+            apt-get install -y unzip python-requests jq
+            mkdir -p /tmp/nsx
+            unzip $nsx_path -d /tmp/nsx
+            cd /tmp/nsx
+            mv nsx-container-2.4* nsx-container-2.4
+            cd nsx-container-2.4/OpenvSwitch/xenial_amd64
+            apt-get update
+            dpkg -i *.deb
+            apt-get install -f -y
+            POD_INTF=$(cat /root/pod_intf)
+            ip addr flush dev ${POD_INTF}
+            mac=$(ifconfig  ${POD_INTF} | grep HWaddr | tr -s " " | cut -d " " -f 5)
+            ovs-vsctl add-br br-int -- set bridge br-int other-config:hwaddr=${mac}
+            ovs-vsctl add-port br-int ${POD_INTF} -- set Interface ${POD_INTF} ofport_request=1
+            ifconfig ${POD_INTF} up
+            dhclient br-int
+            /etc/init.d/openvswitch-switch force-reload-kmod
+          params:
+            $nsx_path: { get_param: nsx_package_path }
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: ovs_install }
