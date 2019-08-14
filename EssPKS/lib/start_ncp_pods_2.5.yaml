@@ -1,0 +1,13 @@
+heat_template_version: "2018-08-31"
+
+resources:
+  start_ncp_pods:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        cd /tmp/nsx/nsx-container-2.5/Kubernetes
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f ncp-ubuntu.yaml
+outputs:
+  OS::stack_id:
+    value: { get_resource: start_ncp_pods }

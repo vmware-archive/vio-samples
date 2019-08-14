@@ -1,0 +1,53 @@
+heat_template_version: "2018-08-31"
+
+parameters:
+  nsx_api_manager:
+    type: string
+  tier0_router:
+    type: string
+  overlay_tz:
+    type: string
+  ip_block:
+    type: string
+  nsx_username:
+    type: string
+  nsx_password:
+    type: string
+  external_ip_pool:
+    type: string
+
+resources:
+  config_ncp:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            POD_INTF=$(cat /root/pod_intf)
+            DOCKER_IMAGE=$(docker images --format "{{.Repository}}" | grep nsx-ncp-ubuntu)
+            kubectl --kubeconfig /etc/kubernetes/admin.conf create clusterrolebinding default-admin --serviceaccount=default:default --clusterrole=cluster-admin
+            sed -i "s?image: nsx-ncp?image: ${DOCKER_IMAGE}:latest?g" /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            #sed -i 's?#enable_snat = True?enable_snat = True?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            sed -i 's?#insecure = False?insecure = True?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            sed -i 's?#top_tier_router = <None>?top_tier_router = $tier0_router?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            sed -i 's?#overlay_tz = <None>?overlay_tz = $overlay_tz?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            sed -i 's?#use_native_loadbalancer = True?use_native_loadbalancer = True?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            sed -i 's?#container_ip_blocks = \[\]?container_ip_blocks = $ip_block?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            sed -i 's?#external_ip_pools_lb = \[\]?external_ip_pools_lb = $external_ip_pool?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            sed -i 's?#nsx_api_managers = \[\]?nsx_api_managers = $nsx_api_manager\n    nsx_api_user = $nsx_username\n    nsx_api_password = $nsx_password?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            sed -i "s?#ovs_uplink_port = <None>?ovs_uplink_port = ${POD_INTF}?g" /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+
+            sed -i 's?tolerations:?tolerations:\n        - effect: NoSchedule\n          key: node.cloudprovider.kubernetes.io/uninitialized\n          value: "true"?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+          params:
+            $nsx_api_manager: { get_param: nsx_api_manager }
+            $tier0_router: { get_param: tier0_router }
+            $overlay_tz: { get_param: overlay_tz }
+            $ip_block: { get_param: ip_block }
+            $nsx_username: { get_param: nsx_username }
+            $nsx_password: { get_param: nsx_password }
+            $external_ip_pool: { get_param: external_ip_pool }
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: config_ncp }

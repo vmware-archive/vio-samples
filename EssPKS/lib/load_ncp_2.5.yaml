@@ -1,0 +1,28 @@
+heat_template_version: "2018-08-31"
+
+parameters:
+  nsx_package_path:
+    type: string
+
+resources:
+  load_ncp:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            UUID=$(curl -s http://169.254.169.254/openstack/2018-08-27/meta_data.json | jq -r .uuid)
+            echo $UUID > /var/lib/cloud/data/instance-id
+            apt-get update
+            apt-get install -y unzip python-requests jq
+            mkdir -p /tmp/nsx
+            unzip $nsx_path -d /tmp/nsx
+            cd /tmp/nsx
+            mv nsx-container-2.5* nsx-container-2.5
+            docker load -i /tmp/nsx/nsx-container-2.5/Kubernetes/nsx-ncp-ubuntu-*.tar
+          params:
+            $nsx_path: { get_param: nsx_package_path }
+outputs:
+  OS::stack_id:
+    value: { get_resource: load_ncp }

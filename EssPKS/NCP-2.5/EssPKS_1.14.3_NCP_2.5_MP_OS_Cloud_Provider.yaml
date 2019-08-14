@@ -1,0 +1,362 @@
+heat_template_version: "2018-08-31"
+description: "Heat Stack to create an Essential PKS cluster"
+
+parameters:
+  name:
+    type: string
+    label: Cluster Name
+    description: Unique name for this Kubernetes cluster
+  image:
+    type: string
+    label: Image
+    description: Image to use for the Kubernetes cluster nodes
+  availability_zone:
+    type: string
+    label: Availability Zone
+    default: nova
+    description: Availability zone for the Kubernetes cluster nodes
+  key_name:
+    type: string
+    label: Key Name
+    description: Key pair name to use when starting cluster nodes
+  node_count:
+    type: number
+    label: Minion Node Count
+    description: Number of minion nodes to spin up
+  nsx_package_path:
+    type: string
+    label: Path for the NSX package on the image
+    description: Full path for the NSX package zip file on the image supplied
+  mgmt_net_cidr:
+    type: string
+    label: Private Network CIDR
+    description: CIDR for the cluster private network
+    default: "10.0.0.0/24"
+  api_net_cidr:
+    type: string
+    label: Container Network CIDR
+    description: CIDR for the cluster container network
+    default: "11.0.0.0/24"
+  nsx_pod_net_cidr:
+    type: string
+    label: Container Network CIDR
+    description: CIDR for the cluster container network, this is different from the pod_network_cidr below.
+    default: "12.0.0.0/24"
+  public_network:
+    type: string
+    label: Public Network ID
+    description: Name or UUID of the public network
+  pod_network_cidr:
+    type: string
+    label: POD network CIDR
+    default: 192.168.0.0/16
+    description: The POD network cidr, this CIDR will be used to allocate IP addresses to Kubernetes PODS
+  nameserver:
+    type: string
+    label: Nameserver for management network
+    default: 192.168.111.1
+  kube_token:
+    type: string
+    label: Token for kubeadm to join minion nodes
+    default: abcdef.0123456789abcdef
+  nsx_api_manager:
+    type: string
+    label: IP address of the NSX API manager
+  nsx_username:
+    type: string
+    label: Username for the NSX API Manager
+  nsx_password:
+    type: string
+    label: Password for the NSX API Manager
+  tier0_router:
+    type: string
+    label: ID or name of the TIER0 Router
+  overlay_tz:
+    type: string
+    label: ID or Name of the Overlay Transport Zone
+  ip_block:
+    type: string
+    label: UUID or name of the IP block for the POD cidr from NSX, this should match the pod_network_cidr specified above.
+  external_ip_pool:
+    type: string
+    label: Name or UUID of the external ip pool in NSX, this pool is used to allocate external IP addresses for LoadBalancers.
+  os_username:
+    type: string
+    label: Openstack username
+  os_password:
+    type: string
+    label: Openstack password
+  os_tenant_id:
+    type: string
+    label: Openstack tenant id
+  os_domain_id:
+    type: string
+    label: Openstack domain id
+  keystone_ip:
+    type: string
+    label: IP address of the keystone endpoint
+
+resources:
+  k8s_secgroup:
+    type: ../lib/k8s_secgroup.yaml
+
+  open_secgroup:
+    type: ../lib/open_secgroup.yaml
+
+  mgmt_network:
+    type: "OS::Neutron::Net"
+    properties:
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'mgmt']]
+
+  mgmt_subnet:
+    type: "OS::Neutron::Subnet"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'mgmt-sub']]
+      network: { get_resource: mgmt_network }
+      ip_version: 4
+      cidr: { get_param: mgmt_net_cidr }
+      enable_dhcp: true
+      dns_nameservers: [{ get_param: nameserver }]
+
+  api_network:
+    type: "OS::Neutron::Net"
+    properties:
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'api']]
+
+  api_subnet:
+    type: "OS::Neutron::Subnet"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'api-sub']]
+      network: { get_resource: api_network }
+      ip_version: 4
+      cidr: { get_param: api_net_cidr }
+      enable_dhcp: true
+
+  pod_network:
+    type: "OS::Neutron::Net"
+    properties:
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'pod']]
+
+  pod_subnet:
+    type: "OS::Neutron::Subnet"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'pod-sub']]
+      network: { get_resource: pod_network }
+      ip_version: 4
+      cidr: { get_param: nsx_pod_net_cidr }
+      enable_dhcp: true
+
+  master_mgmt_port:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_resource: mgmt_network }
+      security_groups: [ get_resource: k8s_secgroup ]
+      fixed_ips:
+      - subnet_id: { get_resource: mgmt_subnet }
+
+  master_api_port:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_resource: api_network }
+      security_groups: [ get_resource: open_secgroup ]
+      fixed_ips:
+      - subnet_id: { get_resource: api_subnet }
+
+  master_pod_port:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_resource: pod_network }
+      security_groups: [ get_resource: open_secgroup ]
+      fixed_ips:
+      - subnet_id: { get_resource: pod_subnet }
+
+  mgmt_router:
+    type: "OS::Neutron::Router"
+    properties:
+      external_gateway_info:
+        enable_snat: true
+        network: { get_param: public_network }
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'mgmt-router']]
+
+  mgmt_router_interface:
+    type: "OS::Neutron::RouterInterface"
+    properties:
+      router: { get_resource: mgmt_router }
+      subnet: { get_resource: mgmt_subnet }
+
+  api_router:
+    type: "OS::Neutron::Router"
+    properties:
+      external_gateway_info:
+        enable_snat: false
+        network: { get_param: public_network }
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'api-router']]
+
+  api_router_interface:
+    type: "OS::Neutron::RouterInterface"
+    properties:
+      router: { get_resource: api_router }
+      subnet: { get_resource: api_subnet }
+
+  mgmt_fip:
+    type: "OS::Neutron::FloatingIP"
+    properties:
+      floating_network: { get_param: public_network }
+
+  master_node_fip:
+    type: "OS::Neutron::FloatingIPAssociation"
+    properties:
+      floatingip_id: { get_resource: mgmt_fip }
+      port_id: { get_resource: master_mgmt_port }
+
+  master_node:
+    type: "OS::Nova::Server"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'master']]
+      networks:
+      - port: { get_resource: master_mgmt_port }
+      - port: { get_resource: master_api_port }
+      - port: { get_resource: master_pod_port }
+      flavor: "m1.medium"
+      image: { get_param: image }
+      availability_zone: { get_param: availability_zone }
+      key_name: { get_param: key_name }
+      config_drive: true
+      user_data_format: RAW
+      user_data:
+        get_resource: kube_master_init
+
+  minion_nodes:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: { get_param: node_count }
+      resource_def:
+        type: "OS::Nova::Server"
+        properties:
+          name:
+            str_replace:
+              template: $name-minion-%index%
+              params:
+                $name: { get_param: name }
+          networks:
+          - network: { get_resource: mgmt_network }
+          - network: { get_resource: api_network }
+          - network: { get_resource: pod_network }
+          security_groups: [ get_resource: k8s_secgroup ]
+          flavor: "m1.medium"
+          image: { get_param: image }
+          availability_zone: { get_param: availability_zone }
+          key_name: { get_param: key_name }
+          config_drive: true
+          user_data_format: RAW
+          user_data:
+            get_resource: kube_minion_init
+
+  kube_cloud_config:
+    type: ../lib/kube_cloud_config_ncp_ip_access.yaml
+    properties:
+      os_username: { get_param: os_username }
+      os_password: { get_param: os_password }
+      os_tenant_id: { get_param: os_tenant_id }
+      os_domain_id: { get_param: os_domain_id }
+      keystone_ip: { get_param: keystone_ip }
+      internal_network_name: { list_join: ['-', [{get_param: name}, 'api']] }
+
+  set_gateway:
+    type: ../lib/ncp_set_gateway.yaml
+    properties:
+      mgmt_gateway: { get_attr: [mgmt_subnet, gateway_ip] }
+      api_gateway: { get_attr: [api_subnet, gateway_ip] }
+      pod_gateway: { get_attr: [pod_subnet, gateway_ip] }
+
+  docker_init:
+    type: ../lib/docker_init.yaml
+
+  kube_install:
+    type: ../lib/esspks_install_1.14.3.yaml
+
+  load_ncp:
+    type: ../lib/load_ncp_2.5.yaml
+    properties:
+      nsx_package_path: { get_param: nsx_package_path }
+
+  kubeadm_master_init:
+    type: ../lib/kubeadm_master_init_1.14.3.yaml
+    properties:
+      cluster_name: { get_param: name }
+      pod_network_cidr: { get_param: pod_network_cidr }
+      kube_token: { get_param: kube_token }
+
+  kubeadm_minion_init:
+    type: ../lib/kubeadm_minion_init_1.14.3.yaml
+    properties:
+      master_ip: { get_attr: [master_node, networks, list_join: ['-', [{get_param: name}, 'api']], 0]}
+      kube_token: { get_param: kube_token }
+
+  config_ncp:
+    type: ../lib/config_ncp_2.5.yaml
+    properties:
+      nsx_api_manager: { get_param: nsx_api_manager }
+      tier0_router: { get_param: tier0_router }
+      overlay_tz: { get_param: overlay_tz }
+      ip_block: { get_param: ip_block }
+      nsx_username: { get_param: nsx_username }
+      nsx_password: { get_param: nsx_password }
+      external_ip_pool: { get_param: external_ip_pool }
+
+  tag_ncp_ports:
+    type: ../lib/tag_ncp_ports_2.5.yaml
+    properties:
+      nsx_api_manager: { get_param: nsx_api_manager }
+      nsx_username: { get_param: nsx_username }
+      nsx_password: { get_param: nsx_password }
+      cluster_name: { get_param: name }
+      pod_network_cidr: { get_param: pod_network_cidr }
+      gateway_ip: { get_attr: [api_subnet, gateway_ip]}
+
+  start_ncp_pods:
+    type: ../lib/start_ncp_pods_2.5.yaml
+
+  install_cinder_csi:
+    type: ../lib/install_cinder_csi_1.14.0.yaml
+
+  kube_master_init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: { get_resource: set_gateway }
+      - config: { get_resource: docker_init }
+      - config: { get_resource: kube_install }
+      - config: { get_resource: kube_cloud_config }
+      - config: { get_resource: load_ncp }
+      - config: { get_resource: kubeadm_master_init }
+      - config: { get_resource: config_ncp }
+      - config: { get_resource: tag_ncp_ports }
+      - config: { get_resource: start_ncp_pods }
+      - config: { get_resource: install_cinder_csi }
+
+  kube_minion_init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: { get_resource: set_gateway }
+      - config: { get_resource: docker_init }
+      - config: { get_resource: kube_install }
+      - config: { get_resource: kube_cloud_config }
+      - config: { get_resource: load_ncp }
+      - config: { get_resource: kubeadm_minion_init }
+      - config: { get_resource: tag_ncp_ports }
