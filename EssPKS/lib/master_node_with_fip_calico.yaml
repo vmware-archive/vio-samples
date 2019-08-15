@@ -1,0 +1,69 @@
+heat_template_version: "2018-08-31"
+
+parameters:
+  mgmt_network:
+    type: string
+  mgmt_subnet:
+    type: string
+  k8s_secgroup:
+    type: string
+  availability_zone:
+    type: string
+  key_name:
+    type: string
+  name:
+    type: string
+  init_routine:
+    type: string
+  image:
+    type: string
+  public_network_id:
+    type: string
+  master_lb_pool:
+    type: string
+
+resources:
+  master_mgmt_port:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_param: mgmt_network }
+      security_groups: [ get_param: k8s_secgroup ]
+      fixed_ips:
+      - subnet_id: { get_param: mgmt_subnet }
+
+  master_fip:
+    type: "OS::Neutron::FloatingIP"
+    properties:
+      floating_network: { get_param: public_network_id }
+
+  master_node_fip:
+    type: "OS::Neutron::FloatingIPAssociation"
+    properties:
+      floatingip_id: { get_resource: master_fip }
+      port_id: { get_resource: master_mgmt_port }
+
+  master_node:
+    type: "OS::Nova::Server"
+    properties:
+      name: { get_param: name }
+      networks:
+      - port: { get_resource: master_mgmt_port }
+      flavor: "m1.medium"
+      image: { get_param: image }
+      availability_zone: { get_param: availability_zone }
+      key_name: { get_param: key_name }
+      config_drive: true
+      user_data_format: RAW
+      user_data: { get_param: init_routine }
+
+  master_lb_pool_member:
+    type: "OS::Neutron::LBaaS::PoolMember"
+    properties:
+      address: { get_attr: [master_node, first_address]}
+      pool: { get_param: master_lb_pool }
+      protocol_port: 6443
+      subnet: { get_param: mgmt_subnet }
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: master_node }

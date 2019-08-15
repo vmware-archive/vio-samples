@@ -19,10 +19,16 @@ parameters:
     type: string
     label: Key Name
     description: Key pair name to use when starting cluster nodes
-  node_count:
+  master_count:
+    type: number
+    label: Master Node Count
+    description: Number of master nodes to spin up
+    default: 2
+  minion_count:
     type: number
     label: Minion Node Count
     description: Number of minion nodes to spin up
+    default: 3
   nsx_package_path:
     type: string
     label: Path for the NSX package on the image
@@ -55,10 +61,6 @@ parameters:
     type: string
     label: Nameserver for management network
     default: 192.168.111.1
-  kube_token:
-    type: string
-    label: Token for kubeadm to join minion nodes
-    default: abcdef.0123456789abcdef
   nsx_api_manager:
     type: string
     label: IP address of the NSX API manager
@@ -95,6 +97,8 @@ parameters:
   keystone_ip:
     type: string
     label: IP address of the keystone endpoint
+  ssh_private_key:
+    type: string
 
 resources:
   k8s_secgroup:
@@ -222,11 +226,59 @@ resources:
       floatingip_id: { get_resource: mgmt_fip }
       port_id: { get_resource: master_mgmt_port }
 
-  master_node:
+  master_lb:
+    type: "OS::Neutron::LBaaS::LoadBalancer"
+    properties:
+      vip_subnet: { get_resource: mgmt_subnet}
+    depends_on: mgmt_router_interface
+
+  master_lb_listener:
+    type: "OS::Neutron::LBaaS::Listener"
+    properties:
+      protocol: TCP
+      protocol_port: 6443
+      loadbalancer: { get_resource: master_lb }
+
+  master_lb_pool:
+    type: "OS::Neutron::LBaaS::Pool"
+    properties:
+      lb_algorithm: ROUND_ROBIN
+      protocol: TCP
+      listener: { get_resource: master_lb_listener }
+
+  master_lb_pool_member:
+    type: "OS::Neutron::LBaaS::PoolMember"
+    properties:
+      address: { get_attr: [main_master_node, networks, list_join: ['-', [{get_param: name}, 'mgmt']], 0]}
+      pool: { get_resource: master_lb_pool }
+      protocol_port: 6443
+      subnet: { get_resource: mgmt_subnet }
+
+  master_lb_monitor:
+    type: "OS::Neutron::LBaaS::HealthMonitor"
+    properties:
+      delay: 5
+      max_retries: 3
+      pool: { get_resource: master_lb_pool }
+      timeout: 5
+      type: TCP
+
+  master_lb_fip:
+    type: "OS::Neutron::FloatingIP"
+    properties:
+      floating_network: { get_param: public_network }
+
+  master_lb_fip_assoc:
+    type: "OS::Neutron::FloatingIPAssociation"
+    properties:
+      floatingip_id: { get_resource: master_lb_fip }
+      port_id: { get_attr: [master_lb, vip_port_id] }
+
+  main_master_node:
     type: "OS::Nova::Server"
     properties:
       name:
-        list_join: ['-', [{get_param: name}, 'master']]
+        list_join: ['-', [{get_param: name}, 'master-main']]
       networks:
       - port: { get_resource: master_mgmt_port }
       - port: { get_resource: master_api_port }
@@ -240,10 +292,41 @@ resources:
       user_data:
         get_resource: kube_master_init
 
+  additional_master_nodes:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count:
+        yaql:
+          expression: int($.data.master_count - 1)
+          data:
+            master_count: { get_param: master_count }
+      resource_def:
+        type: ../lib/master_node_with_fip_ncp.yaml
+        properties:
+          name:
+            str_replace:
+              template: $name-master-%index%
+              params:
+                $name: { get_param: name }
+          mgmt_network: { get_resource: mgmt_network }
+          mgmt_subnet: { get_resource: mgmt_subnet }
+          api_network: { get_resource: api_network }
+          api_subnet: { get_resource: api_subnet }
+          pod_network: { get_resource: pod_network }
+          pod_subnet: { get_resource: pod_subnet }
+          k8s_secgroup: { get_resource: k8s_secgroup }
+          open_secgroup: { get_resource: open_secgroup }
+          availability_zone: { get_param: availability_zone }
+          key_name: { get_param: key_name }
+          init_routine: { get_resource: kube_addl_master_init }
+          image: { get_param: image }
+          public_network: { get_param: public_network }
+          master_lb_pool: { get_resource: master_lb_pool }
+
   minion_nodes:
     type: OS::Heat::ResourceGroup
     properties:
-      count: { get_param: node_count }
+      count: { get_param: minion_count }
       resource_def:
         type: "OS::Nova::Server"
         properties:
@@ -265,6 +348,110 @@ resources:
           user_data_format: RAW
           user_data:
             get_resource: kube_minion_init
+
+  kubeadm_master_join:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            until $(curl --output /dev/null --insecure --silent --fail https://$lb_ip:6443/healthz); do
+                printf '.'
+                sleep 5
+            done
+            API_INTF=$(cat /root/api_intf)
+            APISERVER_IP_ADDRESS=$(/sbin/ifconfig ${API_INTF} | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            cat <<EOF >/etc/kubernetes/kubeadm.conf
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: ClusterConfiguration
+            kubernetesVersion: v1.14.3
+            clusterName: "$cluster_name"
+            imageRepository: vmware
+            controlPlaneEndpoint: "$lb_ip:6443"
+            etcd:
+              local:
+                imageRepository: vmware
+            networking:
+              podSubnet: $pod_network_cidr
+            apiServer:
+              extraArgs:
+                runtime-config: storage.k8s.io/v1=true
+                allow-privileged: "true"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+                advertise-address: ${APISERVER_IP_ADDRESS}
+                bind-address: ${APISERVER_IP_ADDRESS}
+                etcd-servers: https://${APISERVER_IP_ADDRESS}:2379
+            controllerManager:
+              extraArgs:
+                bind-address: ${APISERVER_IP_ADDRESS}
+                cloud-provider: "external"
+                cloud-config: /etc/kubernetes/cloud-config
+              extraVolumes:
+              - name: "cloud-config"
+                hostPath: "/etc/kubernetes/cloud-config"
+                mountPath: "/etc/kubernetes/cloud-config"
+                pathType: File
+            scheduler:
+              extraArgs:
+                bind-address: ${APISERVER_IP_ADDRESS}
+            ---
+            apiVersion: kubeproxy.config.k8s.io/v1alpha1
+            kind: KubeProxyConfiguration
+            BindAddress: ${APISERVER_IP_ADDRESS}
+            HealthzBindAddress: ${APISERVER_IP_ADDRESS}
+            MetricsBindAddress: ${APISERVER_IP_ADDRESS}
+            ---
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: JoinConfiguration
+            discovery:
+              bootstrapToken:
+                token: $token
+                unsafeSkipCAVerification: true
+                apiServerEndpoint: $lb_ip:6443
+            nodeRegistration:
+              kubeletExtraArgs:
+                hostname-override: $(hostname)
+                cloud-provider: "external"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+            controlPlane:
+              localAPIEndpoint:
+                advertiseAddress: "${APISERVER_IP_ADDRESS}"
+                bindPort: 6443
+            EOF
+            HOSTNAME_OVERRIDE=$(hostname)
+            kubeadm join --config /etc/kubernetes/kubeadm.conf
+            sed -i "s?$lb_ip?${APISERVER_IP_ADDRESS}?g" /etc/kubernetes/manifests/kube-apiserver.yaml
+            sed -i "s?$lb_ip?${APISERVER_IP_ADDRESS}?g" /etc/kubernetes/manifests/kube-controller-manager.yaml
+            sed -i "s?$lb_ip?${APISERVER_IP_ADDRESS}?g" /etc/kubernetes/manifests/kube-scheduler.yaml
+            sed -i "s?$master_ip?${APISERVER_IP_ADDRESS}?g" /etc/kubernetes/manifests/kube-apiserver.yaml
+            sed -i "s?$master_ip?${APISERVER_IP_ADDRESS}?g" /etc/kubernetes/manifests/kube-controller-manager.yaml
+            sed -i "s?$master_ip?${APISERVER_IP_ADDRESS}?g" /etc/kubernetes/manifests/kube-scheduler.yaml
+            mkdir -p /root/.kube
+            cp /etc/kubernetes/admin.conf /root/.kube/config
+            chown $(id -u):$(id -g) /root/.kube/config
+          params:
+            $cluster_name: { get_param: name }
+            $pod_network_cidr: { get_param: pod_network_cidr }
+            $token: { get_attr: [generate_token, kube_token] }
+            $lb_ip: { get_attr: [master_lb_fip, floating_ip_address] }
+            $master_ip: { get_attr: [main_master_node, networks, list_join: ['-', [{get_param: name}, 'api']], 0]}
+
+  generate_token:
+    type: ../lib/generate_token.yaml
+
+  copy_ssh_cert:
+    type: ../lib/copy_ssh_cert.yaml
+    properties:
+      ssh_private_key: { get_param: ssh_private_key }
+
+  prepare_kube_certs_main_master:
+    type: ../lib/prepare_kube_certs_master.yaml
+
+  copy_kube_certs_master_nodes:
+    type: ../lib/copy_kube_certs_master_nodes.yaml
+    properties:
+      master_ip: { get_attr: [main_master_node, networks, list_join: ['-', [{get_param: name}, 'mgmt']], 0]}
 
   kube_cloud_config:
     type: ../lib/kube_cloud_config_ncp_ip_access.yaml
@@ -297,18 +484,22 @@ resources:
   load_ncp:
     type: ../lib/load_ncp_2.4.yaml
 
+  forward_api_port:
+    type: ../lib/forward_api_port_ncp.yaml
+
   kubeadm_master_init:
     type: ../lib/kubeadm_master_init_1.14.3.yaml
     properties:
       cluster_name: { get_param: name }
       pod_network_cidr: { get_param: pod_network_cidr }
-      kube_token: { get_param: kube_token }
+      kube_token: { get_attr: [generate_token, kube_token] }
+      lb_ip: { get_attr: [master_lb_fip, floating_ip_address] }
 
   kubeadm_minion_init:
     type: ../lib/kubeadm_minion_init_1.14.3.yaml
     properties:
-      master_ip: { get_attr: [master_node, networks, list_join: ['-', [{get_param: name}, 'api']], 0]}
-      kube_token: { get_param: kube_token }
+      master_ip: { get_attr: [master_lb_fip, floating_ip_address] }
+      kube_token: { get_attr: [generate_token, kube_token] }
 
   config_ncp:
     type: ../lib/config_ncp_2.4.yaml
@@ -341,17 +532,36 @@ resources:
     type: OS::Heat::MultipartMime
     properties:
       parts:
+      - config: { get_resource: copy_ssh_cert }
       - config: { get_resource: set_gateway }
       - config: { get_resource: ovs_install }
       - config: { get_resource: docker_init }
       - config: { get_resource: kube_install }
       - config: { get_resource: kube_cloud_config }
       - config: { get_resource: load_ncp }
+      - config: { get_resource: forward_api_port }
       - config: { get_resource: kubeadm_master_init }
+      - config: { get_resource: prepare_kube_certs_main_master }
       - config: { get_resource: config_ncp }
       - config: { get_resource: tag_ncp_ports }
       - config: { get_resource: start_ncp_pods }
       - config: { get_resource: install_cinder_csi }
+
+  kube_addl_master_init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: { get_resource: copy_ssh_cert }
+      - config: { get_resource: copy_kube_certs_master_nodes }
+      - config: { get_resource: set_gateway }
+      - config: { get_resource: ovs_install }
+      - config: { get_resource: docker_init }
+      - config: { get_resource: kube_install }
+      - config: { get_resource: kube_cloud_config }
+      - config: { get_resource: load_ncp }
+      - config: { get_resource: forward_api_port }
+      - config: { get_resource: kubeadm_master_join }
+      - config: { get_resource: tag_ncp_ports }
 
   kube_minion_init:
     type: OS::Heat::MultipartMime

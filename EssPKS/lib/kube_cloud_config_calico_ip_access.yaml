@@ -1,0 +1,58 @@
+heat_template_version: "2018-08-31"
+
+parameters:
+  os_username:
+    type: string
+  os_password:
+    type: string
+  os_tenant_id:
+    type: string
+  os_domain_id:
+    type: string
+  keystone_ip:
+    type: string
+  subnet_id:
+    type: string
+  lb_subnet_id:
+    type: string
+
+resources:
+  kube_cloud_config:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            ip_addr=$(ip route get 1 | awk '{print $NF;exit}')
+            cat <<EOF >>/etc/hosts
+            ${ip_addr} $(hostname)
+            EOF
+            echo -n | openssl s_client -showcerts -connect $keystone_ip:5000 2>/dev/null | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' >> /etc/ssl/certs/ca-certificates.crt
+            cat <<EOF >/etc/kubernetes/cloud-config
+            [Global]
+            username=$os_username
+            password=$os_password
+            auth-url=https://$keystone_ip:5000/v3
+            tenant-id=$os_tenant_id
+            domain-id=$os_domain_id
+            [BlockStorage]
+            bs-version=v3
+            [LoadBalancer]
+            subnet-id=$subnet_id
+            floating-subnet-id=$lb_subnet_id
+            lb-version=v2
+            EOF
+          params:
+            $os_username: { get_param: os_username }
+            $os_password: { get_param: os_password }
+            $os_tenant_id: { get_param: os_tenant_id }
+            $os_domain_id: { get_param: os_domain_id }
+            $keystone_ip: { get_param: keystone_ip }
+            $lb_subnet_id: { get_param: lb_subnet_id }
+            $subnet_id: { get_param: subnet_id }
+
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: kube_cloud_config }

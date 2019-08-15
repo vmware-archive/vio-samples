@@ -1,0 +1,29 @@
+heat_template_version: "2018-08-31"
+
+resources:
+  token_prefix:
+    type: OS::Heat::RandomString
+    properties:
+      character_classes: [{"class": "lowercase", "min": 1}, {"class": "digits", "min": 1}]
+      length: 6
+
+  token_suffix:
+    type: OS::Heat::RandomString
+    properties:
+      character_classes: [{"class": "lowercase", "min": 1}, {"class": "digits", "min": 1}]
+      length: 16
+
+  token:
+    type: OS::Heat::Value
+    properties:
+      type: string
+      value:
+        str_replace:
+          template: $prefix.$suffix
+          params:
+            $prefix: { get_resource: token_prefix }
+            $suffix: { get_resource: token_suffix }
+
+outputs:
+  kube_token:
+    value: { get_attr: [token, value] }

@@ -1,0 +1,15 @@
+heat_template_version: "2018-08-31"
+
+resources:
+  prepare_kube_certs_main_master:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        mkdir -p /home/ubuntu/kube_certs
+        cp -R /etc/kubernetes/pki/* /home/ubuntu/kube_certs/
+        chown -R ubuntu:ubuntu /home/ubuntu/kube_certs
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: prepare_kube_certs_main_master }

@@ -13,238 +13,248 @@ General Architecture
 
 ![](../media/VIO%20NCP%20container%20solution.png)
 
+Networking details
+------------------
+
+![](../media/VIO%20NCP%20Network%20diagram.png)
+
  **Automate Installation with HEAT Stacks**
-==========================================
+ ==========================================
 
-You can automate all the configuration above with this HEAT stack:
+ To bring up an Essential PKS Cluster with NCP 2.5 Management Plane on top of VIO 6.0 use the following HEAT Stack:
 
-EssPKS_1.14.3_NCP_2.5_MP_OS_Cloud_Provider.yaml
+ _EssPKS_1.14.3_NCP_2.5_MP_OS_Cloud_Provider.yaml_
 
-**To use this heat stack, you need to do a couple of steps manually**:
+ **To use this heat stack, you need to do a couple of steps manually**:
 
-**Openstack steps**
+ **Openstack steps**
 
-1.  Import an Ubuntu 16.04 image:
+ 1.  Import an Ubuntu 16.04 image:
 
-    You can download the latest Ubuntu cloud image from
-    [here](https://cloud-images.ubuntu.com/xenial/current/). Import it
-    into your deployment using either Horizon or the OpenStack cli:
+     You can download the latest Ubuntu cloud image from
+     [here](https://cloud-images.ubuntu.com/xenial/current/). Import it
+     into your deployment using either Horizon or the OpenStack cli:
 
-2.  Start an instance using the image above.
+ 2.  Start an instance using the image above.
 
-3.  Download the NCP package from
-    [here](https://my.vmware.com/web/vmware/details?downloadGroup=NSX-T-PKS-241&productId=673).
-    Copy this image to some permanent location on the instance. Remember
-    this location as you'll need it
+ 3.  Download the NCP package from
+     [here](<Link to NCP 2.5 download url>).
+     Copy this image to some permanent location on the instance. Remember
+     this location as you'll need it
 
-4.  Take a snapshot of the running instance, you will be using this
-    snapshot as the image for the heat stacks.
+ 4.  Take a snapshot of the running instance, you will be using this
+     snapshot as the image for the heat stacks.
 
-    **NSX Steps**
+ **NSX Steps**
 
-<!-- -->
+ <!-- -->
 
-1.  Create an IP block in Advanced Networking & Security IPAM
+ 1.  Create an IP block in Advanced Networking & Security --> IPAM
 
-2.  Create an external IP block in Networking IP Address Management IP
-    Address Pools.
+ 2.  Create an external IP block in Networking --> IP Address Management IP -- > Address Pools.
 
-    **VIO management steps**
+ **VIO management steps (Only for Ingress based deployments)**
 
-<!-- -->
+ ***The parameters file for the heat stack:***
 
-1.  Get the following TLS certificates from your VIO deployment:
+ ```
+ parameters:
 
-    a.  kubectl -n openstack get secret cinder-tls-public
-        -o=jsonpath=\'{.data.tls\\.crt}\' \| base64 --decode \>
-        cinder.crt
+   image: ubuntu_dual_nic
 
-    b.  kubectl -n openstack get secret nova-tls-public
-        -o=jsonpath=\'{.data.tls\\.crt}\' \| base64 --decode \> nova.crt
+   key_name: test
 
-        **The parameters file for the heat stack:**
+   public_network: public
 
-parameters:
+   name: k8scluster
 
-image: ubuntu\_dual\_nic
+   master_count: 2
 
-key\_name: test
+   minion_count: 3
 
-public\_network: public
+   nsx_package_path: /root/nsx-container-2.5.123456.zip
 
-name: k8scluster
+   pod_network_cidr: 193.167.0.0/16
 
-node\_count: 3
+   nsx_api_manager: 192.168.111.94
 
-nsx\_package\_path: /root/nsx-container-2.5.1.13515827.zip
+   nsx_username: admin
 
-pod\_network\_cidr: 193.167.0.0/16
+   nsx_password: Admin!23Admin
 
-kube\_token: yad31n.pil3w87thsvo9img
+   tier0_router: 23fd006e-337a-467a-b3a6-1404a71cc2cf
 
-nsx\_api\_manager: 192.168.111.94
+   overlay_tz: vio-overlay-tz
 
-nsx\_username: admin
+   ip_block: pod-cidr
 
-nsx\_password: Admin!23Admin
+   external_ip_pool: external-ip-pool
 
-tier0\_router: 23fd006e-337a-467a-b3a6-1404a71cc2cf
+   os_username: admin
 
-overlay\_tz: vio-overlay-tz
+   os_password: VMware1!
 
-ip\_block: pod-cidr
+   os_domain_id: default
 
-external\_ip\_pool: external-ip-pool
+   os_tenant_id: 9a09e26d83854c9cbb321a4e93fd5844
 
-os\_username: admin
+   keystone_ip: 192.168.111.200
 
-os\_password: VMware1!
+ ```
+ **Details on all the parameter options**:
 
-os\_domain\_id: default
+ ***If you have IP Access enabled (default VIO) use these parameters***
 
-os\_tenant\_id: 9a09e26d83854c9cbb321a4e93fd5844
+ | Parameter                         | Value                             |
+ | --------------------------------- |:---------------------------------|
+ | image | Name of the snapshot image containing the NCP package.|
+ | key_name | Name of the keypair to use for the Kubernetes nodes.|
+ | public_network | Name of the public network.|
+ | name | A unique name for the Kubernetes cluster, your node names will be derived with this name and the  NCP ports will be tagged with it as well.|
+ | master_count | Number of master nodes to create.|
+ | minion_count | Number of minion nodes to create.|
+ | nsx\_package_path | Path to the nsx package zip file on the image. This should be a complete filepath.|
+ | mgmt\_net\_cidr | CIDR for the management network.|
+ | api\_net\_cidr | CIDR for the API network.|
+ | nsx\_pod\_net\_cidr  | CIDR for the POD network. This is the network that is used for POD communications, POD IPs themselves are assigned out of the pod\_network\_cidr.|
+ | pod\_network\_cidr | CIDR for the Kubernetes POD IPs.|
+ | nameserver | Nameserver IP to use when creating networks and subnets.|
+ | nsx\_api\_manager | IP address of the NSX API manager.|
+ | nsx\_username | Username for the NSX API manager.|
+ | nsx\_password | Password for the NSX API manager.|
+ | tier0\_router | Name or UUID of the TIER0 router for POD networking.|
+ | overlay\_tz | Name or UUID of the overlay transport zone to use for the POD networks.|
+ | ip\_block | Name or UUID of the POD CIDR IP block from NSX.|
+ | external\_ip\_pool | Name or UUID of the External IP pool from NSX. This pool is used to assign external IP addresses for LoadBalancer type services.|
+ | os\_username | Openstack username.|
+ | os\_password | Openstack password.|
+ | os\_tenant\_id | Openstack Tenant ID.|
+ | os\_domain\_id | Openstack Domain ID.|
+ | keystone\_ip  | IP address of the keystone endpoint.|
+ | ssh\_private\_key  | Private key to use for the nodes to ssh to each other.|
 
-keystone\_ip: 192.168.111.200
+ **NOTE:**
 
-keystone\_hostname: keystone.openstack.svc.cluster.local
+ ***The openstack cloud provider uses Public endpoints to communicate with Nova and Neutron, your VM's will need to be able to reach
+ the public endpoints forn these services***
 
-nova\_ip: 192.168.111.200
+ ***Use the private key from the keypair used to create the nodes for the ssh_private_key parameter.***
 
-nova\_hostnames: nova.vio.local nova.openstack.svc.cluster.local
+ **Create the HEAT stack with**:
 
-cinder\_ip: 192.168.111.200
+ ```
+ openstack --insecure stack create -e params.yaml -t vio.heatstacks/EssPKS/NCP-2.4/EssPKS_1.14.3_NCP_2.4_OS_Cloud_provider_IP_Access.yaml \
+ --parameter-file ssh_private_key=/path/to/my/private/key/file k8scluster
+ ```
 
-cinder\_hostnames: cinder.vio.local cinder.openstack.svc.cluster.local
-
-**Details on all the parameter options**:
-
-***If you have IP Access disabled (not common) use these parameters*** 
-
-| Parameter                         | value                             |
-| --------------------------------- |:---------------------------------:|
-| image | Name of the snapshot image containing the NCP package.|
-| key_name | Name of the keypair to use for the Kubernetes nodes.|
-| public_network | Name of the public network.|
-| name | A unique name for the Kubernetes cluster, your node names will be derived with this name and the  NCP ports will be tagged with it as well.|
-| node_count | Number of minion nodes to create. Currently this solution is limited to a single master node.|
-| nsx\_package_path | Path to the nsx package zip file on the image. This should be a complete filepath.|
-| mgmt\_net\_cidr | CIDR for the management network.|
-| api\_net\_cidr | CIDR for the API network.|
-| nsx\_pod\_net\_cidr  | CIDR for the POD network. This is the network that is used for POD communications, POD IPs themselves are assigned out of the pod\_network\_cidr.|
-| pod\_network\_cidr | CIDR for the Kubernetes POD IPs.|
-| nameserver | Nameserver IP to use when creating networks and subnets.|
-| kube\_token   | A kubeadm token to initialize the master node with. The minions will use this token to join the cluster. This needs to be of the format: \[a-zA-Z\]{6}.\[a-zA-Z0-9\]{16}|
-| nsx\_api\_manager | IP address of the NSX API manager.|
-| nsx\_username | Username for the NSX API manager.|
-| nsx\_password | Password for the NSX API manager.|
-| tier0\_router | Name or UUID of the TIER0 router for POD networking.|
-| overlay\_tz | Name or UUID of the overlay transport zone to use for the POD networks.|
-| ip\_block | Name or UUID of the POD CIDR IP block from NSX.|
-| external\_ip\_pool | Name or UUID of the External IP pool from NSX. This pool is used to assign external IP addresses for LoadBalancer type services.|
-| os\_username | Openstack username.|
-| os\_password | Openstack password.|
-| os\_tenant\_id | Openstack Tenant ID.|
-| os\_domain\_id | Openstack Domain ID.|
-| keystone\_ip  | IP address of the keystone endpoint.|
-| keystone\_hostname | Hostname of the keystone endpoint.|
-| nova\_ip | IP address of the nova endpoint.|
-| nova\_hostname | Hostname(s) of the nova endpoint.|
-| cinder\_ip | IP address of the cinder endpoint.|
-| cinder\_hostname  | Hostname(s) of the cinder endpoint.|
+ *The HEAT stack will do the following:*
 
+ 1.  Create instances from the image specified
 
-***\*Copy the downloaded HEAT stack, the parameter file and the nova and
-cinder certificates to a common directory. The stack assumes files
-called nova.crt and cinder.crt are in the same directory as the stack
-file itself. \****
+ 2.  Create the private, API and Container network
 
-***If you have IP Access enabled (default VIO) use these parameters*** 
+ 3.  Create a router and attach the private network
 
-| Parameter                         | value                             |
-| --------------------------------- |:---------------------------------:|
-| image | Name of the snapshot image containing the NCP package.|
-| key_name | Name of the keypair to use for the Kubernetes nodes.|
-| public_network | Name of the public network.|
-| name | A unique name for the Kubernetes cluster, your node names will be derived with this name and the  NCP ports will be tagged with it as well.|
-| node_count | Number of minion nodes to create. Currently this solution is limited to a single master node.|
-| nsx\_package_path | Path to the nsx package zip file on the image. This should be a complete filepath.|
-| mgmt\_net\_cidr | CIDR for the management network.|
-| api\_net\_cidr | CIDR for the API network.|
-| nsx\_pod\_net\_cidr  | CIDR for the POD network. This is the network that is used for POD communications, POD IPs themselves are assigned out of the pod\_network\_cidr.|
-| pod\_network\_cidr | CIDR for the Kubernetes POD IPs.|
-| nameserver | Nameserver IP to use when creating networks and subnets.|
-| kube\_token   | A kubeadm token to initialize the master node with. The minions will use this token to join the cluster. This needs to be of the format: \[a-zA-Z\]{6}.\[a-zA-Z0-9\]{16}|
-| nsx\_api\_manager | IP address of the NSX API manager.|
-| nsx\_username | Username for the NSX API manager.|
-| nsx\_password | Password for the NSX API manager.|
-| tier0\_router | Name or UUID of the TIER0 router for POD networking.|
-| overlay\_tz | Name or UUID of the overlay transport zone to use for the POD networks.|
-| ip\_block | Name or UUID of the POD CIDR IP block from NSX.|
-| external\_ip\_pool | Name or UUID of the External IP pool from NSX. This pool is used to assign external IP addresses for LoadBalancer type services.|
-| os\_username | Openstack username.|
-| os\_password | Openstack password.|
-| os\_tenant\_id | Openstack Tenant ID.|
-| os\_domain\_id | Openstack Domain ID.|
-| keystone\_ip  | IP address of the keystone endpoint.|
+ 4.  Create a no-SNAT router for the API network and attach it
 
-***NOTE: you do not need to supply any hostnames or certificates when IP access is enabled, the HEAT stack will download a certificate.***
+ 5.  Create a POD neutron network.
 
-***NOTE: The openstack cloud provider uses Public endpoints to communicate with Nova and Neutron, your VM's will need to be able to reach 
-         the public endpoints forn these services***
+ 6.  Set the public network as the gateway for the routers.
 
-**Create the HEAT stack with**:
+ 7.  Install OVS, docker and Essential PKS packages.
 
-\# openstack stack create -e params.yaml \--template
-EssPKS\_1.14.3\_NCP\_2.5\_MP\_OS\_Cloud\_provider.yaml k8scluster
+ 8.  Setup the bridge interfaces on each node
 
-*The HEAT stack will do the following:*
+     a.  Create an integration bridge and add the container networking
+         interface to it.
 
-1.  Create instances from the image specified
+     b.  Copy the container interface's Mac address to the bridge br-int
 
-2.  Create the private, API and Container network
+ 9.  Install the certificates specified.
 
-3.  Create a router and attach the private network
+ 10. Load all Essential PKS docker images and tag them appropriately.
 
-4.  Create a no-SNAT router for the API network and attach it
+ 11. Initialize the master node with the token specified using Kubeadm
 
-5.  Create a POD neutron network.
+ 12. Initialize the minion nodes to join the master with kubeadm
 
-6.  Set the public network as the gateway for the routers.
+ 13. Install NCP Debian packages and load the ncp docker files.
 
-7.  Install OVS, docker and Essential PKS packages.
+ 14. Create a default service account with cluster-admin permissions to
+     run the nsx node agent and ncp deployment.
 
-8.  Setup the bridge interfaces on each node
+ 15. Tag the appropriate ports in the NSX API manager with cluster and
+     node_name.
 
-    a.  Create an integration bridge and add the container networking
-        interface to it.
+ 16. Add the cloud provider config to all nodes
 
-    b.  Copy the container interface's Mac address to the bridge br-int
+ 17. Install the openstack cloud controller manager and the cinder-csi
+     plugin pods.
 
-9.  Install the certificates specified.
+ Testing your deployment
+ =======================
+ 1. Check if all nodes are up and running and have joined the cluster successfully
+    * SSH to your main master node, you will see a node named <cluster-name>-master-main
 
-10. Load all Essential PKS docker images and tag them appropriately.
+    * On the main master node execute:
+ ~~~~
+ kubectl get no -o wide
+ ~~~~
+   * Verify all master nodes have internal and external IP addresses
+ ```
+ NAME                     STATUS   ROLES    AGE     VERSION            INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+ k8scluster-master-0      Ready    master   3d23h   v1.14.3+vmware.1   11.0.0.76     5.5.5.39      Ubuntu 16.04.5 LTS   4.4.0-131-generic   docker://18.9.7
+ k8scluster-master-main   Ready    master   3d23h   v1.14.3+vmware.1   11.0.0.252    5.5.5.197     Ubuntu 16.04.5 LTS   4.4.0-131-generic   docker://18.9.7
+ k8scluster-minion-0      Ready    <none>   3d23h   v1.14.3+vmware.1   11.0.0.29     <none>        Ubuntu 16.04.5 LTS   4.4.0-131-generic   docker://18.9.7
+ k8scluster-minion-1      Ready    <none>   3d23h   v1.14.3+vmware.1   11.0.0.250    <none>        Ubuntu 16.04.5 LTS   4.4.0-131-generic   docker://18.9.7
+ ```
 
-11. Initialize the master node with the token specified using Kubeadm
+ 2. Deploy a sample from the examples to test provisioning.
+    * Deploy the examples/nginx_ncp_csi_pv_nsx_lb.yaml file using
+ ~~~~
+ kubectl apply -f nginx_ncp_csi_pv_nsx_lb.yaml
+ ~~~~
+    * Verify a cinder volume was provisioned and attached to a node in Openstack
+    * Verify the persistent volume was created and bound successfully in Kubernetes
+ ```
+ root@k8scluster-master-main:~# kubectl get pvc
+ NAME                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS          AGE
+ csi-pvc-cinderplugin   Bound    pvc-fdb869e9-ce73-11e9-8866-fa163e20a3a3   1Gi        RWO            csi-sc-cinderplugin   30s
+ root@k8scluster-master-main:~# kubectl get pv
+ NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                          STORAGECLASS          REASON   AGE
+ pvc-fdb869e9-ce73-11e9-8866-fa163e20a3a3   1Gi        RWO            Delete           Bound    default/csi-pvc-cinderplugin   csi-sc-cinderplugin            40s
+ root@k8scluster-master-main:~#
+ ```
 
-12. Initialize the minion nodes to join the master with kubeadm
+ Scaling your deployment
+ =======================
 
-13. Install NCP Debian packages and load the ncp docker files.
+ To scale up your deployment adjust these two parameters in your params.yaml file, you can increase or decrease the
+ number of nodes of each type, you still need a minimum of 1 master node and 1 minion node:
+ ~~~~
+ minion_count: 2
+ master_count: 2
+ ~~~~
+ Increase or decrease the number to the desired number of master and/or minion nodes and update the stack with
+ ```
+ openstack --insecure stack update -e params.yaml --template vio.heatstacks/EssPKS/NCP-2.4/EssPKS_1.14.3_NCP_2.4_OS_Cloud_provider_IP_Access.yaml \
+ --parameter-file ssh_private_key=/path/to/my/private/key/file  k8scluster
+ ```
 
-14. Create a default service account with cluster-admin permissions to
-    run the nsx node agent and ncp deployment.
+ Keep the rest of the parameters the same as when the stack was created.
 
-15. Tag the appropriate ports in the NSX API manager with cluster and
-    node\_name.
+ Verify nodes were created or deleted based on your desired node count by running the following command on any master node:
+ ~~~~
+ kubectl get no -o wide
+ ~~~~
 
-16. Add the cloud provider config to all nodes
+ External Access to the Cluster
+ ==============================
 
-17. Install the openstack cloud controller manager and the cinder-csi
-    plugin pods.
+ The heat stacks create a Neutron LoadBalancer on the management network with a FloatingIP from the public network
+ specified in the parameters file. The kubeconfig on each master node uses this IP address as the Kubernetes API endpoint.
 
-Features
---------
-
-1.  Supports external LoadBalancer via NSX
-
-2.  Supports persistent volume provisioning, attachment and snapshotting
-    via Openstack Cinder.
+ *You can get the kubeconfig file from (on any master node):*
+ ```
+ /etc/kubernetes/admin.conf
+ ```

@@ -8,6 +8,11 @@ parameters:
     type: string
   kube_token:
     type: string
+  lb_ip:
+    type: string
+  lb_port:
+    type: string
+    default: 6443
 
 resources:
   kubeadm_master_init:
@@ -28,21 +33,21 @@ resources:
               ttl: "0"
             nodeRegistration:
               kubeletExtraArgs:
-                hostname-override: $(hostname)
-                address: ${APISERVER_IP_ADDRESS}
-                healthz-bind-address: ${APISERVER_IP_ADDRESS}
-                node-ip: ${APISERVER_IP_ADDRESS}
+                hostname-override: "$(hostname)"
+                address: "${APISERVER_IP_ADDRESS}"
+                node-ip: "${APISERVER_IP_ADDRESS}"
                 cloud-provider: "external"
                 allow-privileged: "true"
             localAPIEndpoint:
-              advertiseAddress: ${APISERVER_IP_ADDRESS}
+              advertiseAddress: "${APISERVER_IP_ADDRESS}"
               bindPort: 6443
             ---
             apiVersion: kubeadm.k8s.io/v1beta1
             kind: ClusterConfiguration
             kubernetesVersion: v1.14.3
-            clusterName: $cluster_name
+            clusterName: "$cluster_name"
             imageRepository: vmware
+            controlPlaneEndpoint: "$lb_ip:$lb_port"
             etcd:
               local:
                 imageRepository: vmware
@@ -77,7 +82,7 @@ resources:
             MetricsBindAddress: ${APISERVER_IP_ADDRESS}
             EOF
             HOSTNAME_OVERRIDE=$(hostname)
-            kubeadm init --config /etc/kubernetes/kubeadm.conf
+            kubeadm init --config /etc/kubernetes/kubeadm.conf --experimental-upload-certs
             mkdir -p /root/.kube
             cp -i /etc/kubernetes/admin.conf /root/.kube/config
             chown $(id -u):$(id -g) /root/.kube/config
@@ -94,6 +99,8 @@ resources:
             $cluster_name: { get_param: cluster_name }
             $pod_network_cidr: { get_param: pod_network_cidr }
             $token: { get_param: kube_token }
+            $lb_ip: { get_param: lb_ip }
+            $lb_port: { get_param: lb_port }
 
 outputs:
   OS::stack_id:

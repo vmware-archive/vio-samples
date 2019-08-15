@@ -1,0 +1,374 @@
+heat_template_version: "2018-08-31"
+description: "Heat Stack to create an Essential PKS cluster with Calico CNI"
+
+parameters:
+  name:
+    type: string
+    label: Cluster Name
+    description: Unique name for this Kubernetes cluster.
+  image:
+    type: string
+    label: Image
+    description: Image to use for the Kubernetes cluster nodes
+  availability_zone:
+    type: string
+    label: Availability Zone
+    default: nova
+    description: Availability zone for the Kubernetes cluster nodes
+  key_name:
+    type: string
+    label: Key Name
+    description: Key pair name to use when starting cluster nodes
+  mgmt_net_cidr:
+    type: string
+    label: Private Network CIDR
+    description: CIDR for the cluster private network
+    default: "10.0.0.0/24"
+  public_network_id:
+    type: string
+    label: Public Network ID
+    description: UUID of the public network
+  public_subnet_id:
+    type: string
+    label: Public Subnet Id
+    description: UUID of the public subnet to assign LoadBalancer IPs
+  pod_network_cidr:
+    type: string
+    label: POD network CIDR
+    default: 192.168.0.0/16
+  nameserver:
+    type: string
+    label: Nameserver for management network
+    default: 192.168.111.1
+  node_count:
+    type: string
+    label: Number of minion nodes
+    default: 3
+  os_username:
+    type: string
+    label: Openstack username
+  os_password:
+    type: string
+    label: Openstack password
+  os_tenant_id:
+    type: string
+    label: Openstack tenant id
+  os_domain_id:
+    type: string
+    label: Openstack domain id
+  keystone_ip:
+    type: string
+    label: IP address of the keystone endpoint
+  keystone_hostname:
+    type: string
+    label: Hostname for the keystone endpoint
+  nova_ip:
+    type: string
+    label: IP address of the nova endpoint
+  nova_hostnames:
+    type: string
+    label: Hostname for the nova endpoint
+    description: Space separated hostnames for the nova endpoint
+  neutron_hostnames:
+    type: string
+    label: Hostname for the neutron endpoint
+    description: Space separated hostnames for the neutron endpoint
+  neutron_ip:
+    type: string
+    label: Hostname for the neutron endpoint
+    description: Space separated hostnames for the neutron endpoint
+  cinder_ip:
+    type: string
+    label: IP address of the cinder endpoint
+  cinder_hostnames:
+    type: string
+    label: Hostname for the cinder endpoint
+    description: Space separated hostnames for the cinder endpoint
+
+
+resources:
+  k8s_secgroup:
+    type: ../lib/k8s_secgroup.yaml
+
+  open_secgroup:
+    type: ../lib/open_secgroup.yaml
+
+  mgmt_network:
+    type: "OS::Neutron::Net"
+    properties:
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'mgmt']]
+
+  mgmt_subnet:
+    type: "OS::Neutron::Subnet"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'mgmt-sub']]
+      network: { get_resource: mgmt_network }
+      ip_version: 4
+      cidr: { get_param: mgmt_net_cidr }
+      enable_dhcp: true
+      dns_nameservers: [{ get_param: nameserver }]
+
+  master_mgmt_port:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_resource: mgmt_network }
+      security_groups: [ get_resource: k8s_secgroup ]
+      fixed_ips:
+      - subnet_id: { get_resource: mgmt_subnet }
+
+  mgmt_router:
+    type: "OS::Neutron::Router"
+    properties:
+      external_gateway_info:
+        enable_snat: true
+        network: { get_param: public_network }
+      admin_state_up: true
+      name:
+        list_join: ['-', [{get_param: name}, 'mgmt-router']]
+
+  mgmt_router_interface:
+    type: "OS::Neutron::RouterInterface"
+    properties:
+      router: { get_resource: mgmt_router }
+      subnet: { get_resource: mgmt_subnet }
+
+  mgmt_fip:
+    type: "OS::Neutron::FloatingIP"
+    properties:
+      floating_network: { get_param: public_network }
+
+  master_node_fip:
+    type: "OS::Neutron::FloatingIPAssociation"
+    properties:
+      floatingip_id: { get_resource: mgmt_fip }
+      port_id: { get_resource: master_mgmt_port }
+
+  master_lb:
+    type: "OS::Neutron::LBaaS::LoadBalancer"
+    properties:
+      vip_subnet: { get_resource: mgmt_subnet }
+    depends_on: mgmt_router_interface
+
+  master_lb_listener:
+    type: "OS::Neutron::LBaaS::Listener"
+    properties:
+      protocol: HTTPS
+      protocol_port: 6443
+      loadbalancer: { get_resource: master_lb }
+
+  master_lb_pool:
+    type: "OS::Neutron::LBaaS::Pool"
+    properties:
+      lb_algorithm: ROUND_ROBIN
+      protocol: HTTPS
+      listener: { get_resource: master_lb_listener }
+
+  master_lb_pool_member:
+    type: "OS::Neutron::LBaaS::PoolMember"
+    properties:
+      address: { get_attr: [master_node, networks, list_join: ['-', [{get_param: name}, 'mgmt']], 0]}
+      pool: { get_resource: master_lb_pool }
+      protocol_port: 6443
+      subnet: { get_resource: mgmt_subnet }
+
+  master_node:
+    type: "OS::Nova::Server"
+    properties:
+      name:
+        list_join: ['-', [{get_param: name}, 'master-0']]
+      networks:
+      - port: { get_resource: master_mgmt_port }
+      flavor: "m1.medium"
+      image: { get_param: image }
+      availability_zone: { get_param: availability_zone }
+      key_name: { get_param: key_name }
+      config_drive: true
+      user_data_format: RAW
+      user_data:
+        get_resource: kube_master_init
+
+  minion_nodes:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: { get_param: node_count }
+      resource_def:
+        type: "OS::Nova::Server"
+        properties:
+          name:
+            str_replace:
+              template: $name-minion-%index%
+              params:
+                $name: { get_param: name }
+          networks:
+          - network: { get_resource: mgmt_network }
+          security_groups: [ get_resource: k8s_secgroup ]
+          flavor: "m1.medium"
+          image: { get_param: image }
+          availability_zone: { get_param: availability_zone }
+          key_name: { get_param: key_name }
+          user_data_format: RAW
+          user_data:
+            get_resource: kube_minion_init
+
+  generate_token:
+    type: ../lib/generate_token.yaml
+
+  cert_init:
+    type: ../lib/os_cert_init.yaml
+
+  docker_init:
+    type: ../lib/docker_init.yaml
+
+  kube_install:
+    type: ../lib/esspks_install_1.14.3.yaml
+
+  kube_cloud_config:
+    type: ../lib/kube_cloud_config_calico_ingress.yaml
+    properties:
+      os_username: { get_param: os_username }
+      os_password: { get_param: os_password }
+      os_tenant_id: { get_param: os_tenant_id }
+      os_domain_id: { get_param: os_domain_id }
+      keystone_ip: { get_param: keystone_ip }
+      keystone_hostname: { get_param: keystone_hostname }
+      nova_hostnames: { get_param: nova_hostnames }
+      nova_ip: { get_param: nova_ip }
+      cinder_ip: { get_param: cinder_ip }
+      cinder_hostnames: { get_param: cinder_hostnames }
+
+  kubeadm_master_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            ip_addr=$(ip route get 1 | awk '{print $NF;exit}')
+            cat <<EOF >/etc/kubernetes/kubeadm.conf
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: InitConfiguration
+            bootstrapTokens:
+            - token: "$token"
+              description: "default kubeadm bootstrap token"
+              ttl: "0"
+            nodeRegistration:
+              kubeletExtraArgs:
+                hostname-override: $(hostname)
+                cloud-provider: "external"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+            ---
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: ClusterConfiguration
+            kubernetesVersion: v1.14.3
+            clusterName: $name
+            imageRepository: vmware
+            etcd:
+              local:
+                imageRepository: vmware
+            apiServer:
+              extraArgs:
+                bind-address: ${ip_addr}
+                runtime-config: storage.k8s.io/v1=true
+                allow-privileged: "true"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+            controllerManager:
+              extraArgs:
+                bind-address: ${ip_addr}
+                cloud-provider: "external"
+                cloud-config: /etc/kubernetes/cloud-config
+              extraVolumes:
+              - name: "cloud-config"
+                hostPath: "/etc/kubernetes/cloud-config"
+                mountPath: "/etc/kubernetes/cloud-config"
+                pathType: File
+            networking:
+              podSubnet: $pod_network_cidr
+            scheduler:
+              extraArgs:
+                bind-address: ${ip_addr}
+            EOF
+
+            HOSTNAME_OVERRIDE=$(hostname)
+            kubeadm init --config /etc/kubernetes/kubeadm.conf
+            kubectl --kubeconfig /etc/kubernetes/admin.conf create clusterrolebinding controller-admin --serviceaccount=kube-system:service-controller --clusterrole=cluster-admin
+            kubectl --kubeconfig /etc/kubernetes/admin.conf create secret -n kube-system generic cloud-config --from-literal=cloud.conf="$(cat /etc/kubernetes/cloud-config)" --dry-run -o yaml > /root/cloud-config-secret.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f /root/cloud-config-secret.yaml
+            mkdir -p /root/.kube
+            cp /etc/kubernetes/admin.conf /root/.kube/config
+            chown $(id -u):$(id -g) /root/.kube/config
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-roles.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-role-bindings.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/controller-manager/openstack-cloud-controller-manager-ds.yaml
+          params:
+            $name: { get_param: name }
+            $pod_network_cidr: { get_param: pod_network_cidr }
+            $token: { get_attr: [generate_token, kube_token] }
+
+  kubeadm_minion_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            until $(curl --output /dev/null --insecure --silent --fail https://$master_ip:6443/healthz); do
+                printf '.'
+                sleep 5
+            done
+            cat <<EOF >/etc/kubernetes/kubeadm.conf
+            apiVersion: kubeadm.k8s.io/v1beta1
+            kind: JoinConfiguration
+            discovery:
+              bootstrapToken:
+                token: $token
+                unsafeSkipCAVerification: true
+                apiServerEndpoint: $master_ip:6443
+            nodeRegistration:
+              kubeletExtraArgs:
+                hostname-override: $(hostname)
+                cloud-provider: "external"
+                feature-gates: "CSINodeInfo=true,CSIDriverRegistry=true"
+            EOF
+            HOSTNAME_OVERRIDE=$(hostname)
+            kubeadm join --config /etc/kubernetes/kubeadm.conf
+          params:
+            $master_ip: { get_attr: [master_node, first_address]}
+            $token: { get_attr: [generate_token, kube_token] }
+
+  install_calico:
+    type: ../lib/install_calico_3.7.yaml
+    properties:
+      pod_network_cidr: { get_param: pod_network_cidr }
+
+  install_cinder_csi:
+    type: ../lib/install_cinder_csi_1.14.0.yaml
+
+  kube_master_init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: { get_resource: cert_init }
+      - config: { get_resource: docker_init }
+      - config: { get_resource: kube_install }
+      - config: { get_resource: kube_cloud_config }
+      - config: { get_resource: kubeadm_master_init }
+      - config: { get_resource: install_calico }
+      - config: { get_resource: install_cinder_csi }
+
+  kube_minion_init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+      - config: { get_resource: cert_init }
+      - config: { get_resource: docker_init }
+      - config: { get_resource: kube_install }
+      - config: { get_resource: kube_cloud_config }
+      - config: { get_resource: kubeadm_minion_init }
+
+outputs:
+  instance_ip:
+    description: Floating IP address of the master node
+    value: { get_attr: [Fip_1, floating_ip_address] }

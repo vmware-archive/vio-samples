@@ -1,0 +1,19 @@
+heat_template_version: "2018-08-31"
+
+parameters:
+  ssh_private_key:
+    type: string
+
+resources:
+  copy_ssh_cert:
+    type: OS::Heat::CloudConfig
+    properties:
+      cloud_config:
+        write_files:
+        - path: /root/ssh_pvt_key
+          content: { get_param: ssh_private_key }
+          permissions: '0600'
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: copy_ssh_cert }

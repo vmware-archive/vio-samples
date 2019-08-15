@@ -1,0 +1,18 @@
+heat_template_version: "2018-08-31"
+
+resources:
+  forward_api_port:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        sysctl -w net.ipv4.ip_forward=1
+        API_INTF=$(cat /root/api_intf)
+        APISERVER_IP_ADDRESS=$(/sbin/ifconfig ${API_INTF} | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+        MGMT_IP_ADDRESS=$(ip route get 1 | awk '{print $NF;exit}')
+        iptables -t nat -A PREROUTING -p tcp -d $MGMT_IP_ADDRESS --dport 6443 -j DNAT --to $APISERVER_IP_ADDRESS:6443
+        iptables -A FORWARD -p tcp -d $APISERVER_IP_ADDRESS --dport 6443 -j ACCEPT
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: forward_api_port }
