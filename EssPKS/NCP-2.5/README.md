@@ -197,7 +197,7 @@ file itself. \****
 \# openstack stack create -e params.yaml \--template
 EssPKS\_1.14.3\_NCP\_2.5\_MP\_OS\_Cloud\_provider.yaml k8scluster
 
-*The HEAT stack with do the following:*
+*The HEAT stack will do the following:*
 
 1.  Create instances from the image specified
 
