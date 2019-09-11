@@ -1,3 +1,7 @@
+<!--
+Copyright © 2019 VMware, Inc. All Rights Reserved.
+SPDX-License-Identifier: BSD-2-Clause
+-->
 Essential PKS Container cluster on VMware Integrated OpenStack 6.0 Manual Installation
 ==================================================================
 ***Follow these instructions only if you wish to replicate the functionality of the HEAT stacks manually.***
