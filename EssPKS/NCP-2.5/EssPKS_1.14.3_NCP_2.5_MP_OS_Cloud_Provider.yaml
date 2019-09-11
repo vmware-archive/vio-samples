@@ -97,6 +97,8 @@ parameters:
   keystone_ip:
     type: string
     label: IP address of the keystone endpoint
+  ssh_private_key:
+    type: string
 
 resources:
   k8s_secgroup:
@@ -391,12 +393,16 @@ resources:
     properties:
       nsx_package_path: { get_param: nsx_package_path }
 
+  forward_api_port:
+    type: ../lib/forward_api_port_ncp.yaml
+
   kubeadm_master_init:
     type: ../lib/kubeadm_master_init_1.14.3.yaml
     properties:
       cluster_name: { get_param: name }
       pod_network_cidr: { get_param: pod_network_cidr }
       kube_token: { get_attr: [generate_token, kube_token] }
+      lb_ip: { get_attr: [master_lb_fip, floating_ip_address] }
 
   kubeadm_minion_init:
     type: ../lib/kubeadm_minion_init_1.14.3.yaml

@@ -12,6 +12,8 @@ resources:
         str_replace:
           template: |
             #!/bin/bash
+            apt-get update
+            apt-get install -y unzip python-requests jq
             UUID=$(curl -s http://169.254.169.254/openstack/2018-08-27/meta_data.json | jq -r .uuid)
             echo $UUID > /var/lib/cloud/data/instance-id
             apt-get update
