@@ -122,6 +122,8 @@ parameters:
 | name | A unique name for the Kubernetes cluster, your node names will be derived with this name and the  NCP ports will be tagged with it as well.|
 | master_count | Number of master nodes to create.|
 | minion_count | Number of minion nodes to create.|
+| master_flavor | Instance flavor for master nodes. default: m1.medium |
+| minion_flavor | Instance flavor for minion nodes. default: m1.medium |
 | nsx\_package_path | Path to the nsx package zip file on the image. This should be a complete filepath.|
 | mgmt\_net\_cidr | CIDR for the management network.|
 | api\_net\_cidr | CIDR for the API network.|

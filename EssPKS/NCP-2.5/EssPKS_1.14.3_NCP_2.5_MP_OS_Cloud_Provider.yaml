@@ -29,6 +29,14 @@ parameters:
     label: Minion Node Count
     description: Number of minion nodes to spin up
     default: 3
+  master_flavor:
+    type: string
+    label: Instance flavor name for Master nodes
+    default: "m1.medium"
+  minion_flavor:
+    type: string
+    label: Instance flavor name for Minion nodes
+    default: "m1.medium"
   nsx_package_path:
     type: string
     label: Path for the NSX package on the image
@@ -283,7 +291,7 @@ resources:
       - port: { get_resource: master_mgmt_port }
       - port: { get_resource: master_api_port }
       - port: { get_resource: master_pod_port }
-      flavor: "m1.medium"
+      flavor: { get_param: master_flavor }
       image: { get_param: image }
       availability_zone: { get_param: availability_zone }
       key_name: { get_param: key_name }
@@ -322,6 +330,7 @@ resources:
           image: { get_param: image }
           public_network: { get_param: public_network }
           master_lb_pool: { get_resource: master_lb_pool }
+          master_flavor: { get_param: master_flavor }
 
   minion_nodes:
     type: OS::Heat::ResourceGroup
@@ -340,7 +349,7 @@ resources:
           - network: { get_resource: api_network }
           - network: { get_resource: pod_network }
           security_groups: [ get_resource: k8s_secgroup ]
-          flavor: "m1.medium"
+          flavor: { get_param: minion_flavor }
           image: { get_param: image }
           availability_zone: { get_param: availability_zone }
           key_name: { get_param: key_name }

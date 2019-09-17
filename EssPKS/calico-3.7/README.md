@@ -33,6 +33,8 @@ Parameters:
 | key\_name | Name of the keypair |
 | master_count | Number of master nodes to create.|
 | minion_count | Number of minion nodes to create.|
+| master_flavor | Instance flavor for master nodes. default: m1.medium |
+| minion_flavor | Instance flavor for minion nodes. default: m1.medium |
 | public\_network\_id | UUID of the public/floating network |
 | public\_subnet\_id | UUID of the public/floating subnet |
 | name | A unique name for your cluster, the nodes will be named after this name |

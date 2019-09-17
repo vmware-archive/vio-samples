@@ -21,6 +21,8 @@ parameters:
     type: string
   master_lb_pool:
     type: string
+  master_flavor:
+    type: string
 
 resources:
   master_mgmt_port:
@@ -48,7 +50,7 @@ resources:
       name: { get_param: name }
       networks:
       - port: { get_resource: master_mgmt_port }
-      flavor: "m1.medium"
+      flavor: { get_param: master_flavor }
       image: { get_param: image }
       availability_zone: { get_param: availability_zone }
       key_name: { get_param: key_name }

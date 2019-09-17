@@ -50,6 +50,14 @@ parameters:
     label: Minion Node Count
     description: Number of minion nodes to spin up
     default: 3
+  master_flavor:
+    type: string
+    label: Instance flavor name for Master nodes
+    default: "m1.medium"
+  minion_flavor:
+    type: string
+    label: Instance flavor name for Minion nodes
+    default: "m1.medium"
   os_username:
     type: string
     label: Openstack username
@@ -183,7 +191,7 @@ resources:
         list_join: ['-', [{get_param: name}, 'master-main']]
       networks:
       - port: { get_resource: master_mgmt_port }
-      flavor: "m1.medium"
+      flavor: { get_param: master_flavor }
       image: { get_param: image }
       availability_zone: { get_param: availability_zone }
       key_name: { get_param: key_name }
@@ -217,6 +225,7 @@ resources:
           image: { get_param: image }
           public_network_id: { get_param: public_network_id }
           master_lb_pool: { get_resource: master_lb_pool }
+          master_flavor: { get_param: master_flavor }
 
   minion_nodes:
     type: OS::Heat::ResourceGroup
@@ -233,7 +242,7 @@ resources:
           networks:
           - network: { get_resource: mgmt_network }
           security_groups: [ get_resource: k8s_secgroup ]
-          flavor: "m1.medium"
+          flavor: { get_param: minion_flavor }
           image: { get_param: image }
           availability_zone: { get_param: availability_zone }
           key_name: { get_param: key_name }
