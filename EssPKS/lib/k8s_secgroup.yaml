@@ -31,6 +31,11 @@ resources:
         protocol: tcp
         port_range_min: 22
         port_range_max: 22
+      - direction: ingress
+        ethertype: IPv4
+        protocol: tcp
+        port_range_min: 179
+        port_range_max: 179
       description: "Security group for k8s clusters"
 
 outputs:
