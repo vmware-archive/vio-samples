@@ -1,0 +1,87 @@
+heat_template_version: "2018-08-31"
+
+parameters:
+  cluster_name:
+    type: string
+  nsx_api_manager:
+    type: string
+  nsx_username:
+    type: string
+  nsx_password:
+    type: string
+  pod_network_cidr:
+    type: string
+  gateway_ip:
+    type: string
+
+resources:
+  tag_ncp_ports:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+
+            cat <<EOF >/root/tag_nsx_ports.py
+            #!/usr/bin/python
+            import json
+            import requests
+            import os
+
+            URL_1 = "https://$nsx_api_manager/policy/api/v1/infra/segments"
+            URL_2 = "https://$nsx_api_manager/policy/api/v1/infra/segments/%s/ports"
+            USERNAME = "$nsx_username"
+            PASSWORD = "$nsx_password"
+            CLUSTER_NAME = "$cluster_name"
+            POD_NETWORK_NAME = CLUSTER_NAME + '-pod'
+            SEGMENT_ID = ''
+            IP_ADDRESS = os.environ['POD_IP_ADDRESS']
+            HOSTNAME = os.environ['HOSTNAME']
+            IP_SUBSCRIPT = ".".join(IP_ADDRESS.split('.')[0:-1])
+
+            response1 = requests.get(URL_1, verify=False, auth=(USERNAME, PASSWORD))
+            print "\n URL_1 %s" % URL_1
+            segments = json.loads(response1.text)
+            print "\n segments %s" % segments
+            for segment in segments['results']:
+                if POD_NETWORK_NAME in segment.get('display_name') and segment.get('resource_type') == 'Segment':
+                    SEGMENT_ID = segment.get('id')
+                    break
+            if SEGMENT_ID is '':
+               exit(0)
+
+            URL_FINAL = URL_2 % SEGMENT_ID
+            response = requests.get(URL_FINAL, verify=False, auth=(USERNAME, PASSWORD))
+            ports = json.loads(response.text)
+
+            for port in ports['results']:
+                if port.get('address_bindings'):
+                    for ip in port['address_bindings']:
+                        if ip['ip_address'] == IP_ADDRESS:
+                            print "\nUpdating Port Tags\n"
+                            port['tags'].append({'scope': 'ncp/cluster', 'tag': CLUSTER_NAME})
+                            port['tags'].append({'scope': 'ncp/node_name', 'tag': HOSTNAME})
+                            data = {'tags': port['tags'], '_revision': port['_revision'],
+                                    'attachment': port['attachment'], 'display_name': port['display_name']}
+                            port_url = URL_FINAL + '/' + port['id']
+                            t = requests.put(port_url, verify=False, auth=(USERNAME, PASSWORD),
+                                             json=data)
+                            print t.text
+            EOF
+            POD_INTF=$(cat /root/pod_intf)
+            export POD_IP_ADDRESS=$(/sbin/ifconfig ${POD_INTF} | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            export HOSTNAME=$(hostname)
+            python /root/tag_nsx_ports.py
+            ip route add $pod_cidr via $gateway_ip
+          params:
+            $nsx_api_manager: { get_param: nsx_api_manager }
+            $nsx_username: { get_param: nsx_username }
+            $nsx_password: { get_param: nsx_password }
+            $cluster_name: { get_param: cluster_name }
+            $pod_cidr: { get_param: pod_network_cidr }
+            $gateway_ip: { get_param: gateway_ip }
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: tag_ncp_ports }
