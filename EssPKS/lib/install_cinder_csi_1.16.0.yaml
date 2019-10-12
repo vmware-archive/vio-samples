@@ -1,0 +1,27 @@
+# Copyright © 2019 VMware, Inc. All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+
+heat_template_version: "2018-08-31"
+
+resources:
+  install_cinder_csi:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        cd /root
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.16.0/manifests/cinder-csi-plugin/cinder-csi-controllerplugin-rbac.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.16.0/manifests/cinder-csi-plugin/csi-cinder-driver.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.16.0/manifests/cinder-csi-plugin/cinder-csi-nodeplugin-rbac.yaml
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.16.0/manifests/cinder-csi-plugin/cinder-csi-nodeplugin.yaml
+        curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.16.0/manifests/cinder-csi-plugin/cinder-csi-controllerplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' cinder-csi-nodeplugin.yaml
+        sed -i 's?volumeMounts:?volumeMounts:\n            - mountPath: /etc/ssl/certs\n              name: ca-certs\n              readOnly: true?g' cinder-csi-controllerplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' cinder-csi-nodeplugin.yaml
+        sed -i 's?volumes:?volumes:\n        - hostPath:\n            path: /etc/ssl/certs\n            type: DirectoryOrCreate\n          name: ca-certs?g' cinder-csi-controllerplugin.yaml
+        sed -i 's?containers:?hostNetwork: true\n      containers:?g' cinder-csi-controllerplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f cinder-csi-nodeplugin.yaml
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f cinder-csi-controllerplugin.yaml
+outputs:
+  OS::stack_id:
+    value: { get_resource: install_cinder_csi }

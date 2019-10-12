@@ -31,7 +31,6 @@ resources:
             DOCKER_IMAGE=$(docker images --format "{{.Repository}}" | grep nsx-ncp-ubuntu)
             kubectl --kubeconfig /etc/kubernetes/admin.conf create clusterrolebinding default-admin --serviceaccount=default:default --clusterrole=cluster-admin
             sed -i "s?image: nsx-ncp?image: ${DOCKER_IMAGE}:latest?g" /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
-            #sed -i 's?#enable_snat = True?enable_snat = True?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
             sed -i 's?#insecure = False?insecure = True?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
             sed -i 's?#top_tier_router = <None>?top_tier_router = $tier0_router?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
             sed -i 's?#overlay_tz = <None>?overlay_tz = $overlay_tz?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml

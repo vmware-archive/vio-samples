@@ -1,0 +1,35 @@
+# Copyright © 2019 VMware, Inc. All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+
+heat_template_version: "2018-08-31"
+
+resources:
+  esspks_install:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        cd /root
+        curl https://downloads.heptio.com/essential-pks/523a448aa3e9a0ef93ff892dceefee0a/vmware-kubernetes-v1.16.0%2Bvmware.1.tar.gz -o vmware-kubernetes-v1.16.0+vmware.1.tar.gz
+        tar -zxvf vmware-kubernetes-v1.16.0+vmware.1.tar.gz
+        cd /root/vmware-kubernetes-v1.16.0+vmware.1/kubernetes-v1.16.0+vmware.1/images/
+        for f in *.gz; do cat $f | docker load; done
+        docker load -i /root/vmware-kubernetes-v1.16.0+vmware.1/coredns-v1.6.2+vmware.1/images/coredns-v1.6.2_vmware.1.tar.gz
+        docker load -i /root/vmware-kubernetes-v1.16.0+vmware.1/etcd-v3.3.15+vmware.1/images/etcd-v3.3.15_vmware.1.tar.gz
+        docker tag vmware/e2e-test:v1.16.0_vmware.1 vmware/e2e-test:v1.16.0
+        docker tag vmware/kube-apiserver:v1.16.0_vmware.1 vmware/kube-apiserver:v1.16.0
+        docker tag vmware/kube-controller-manager:v1.16.0_vmware.1 vmware/kube-controller-manager:v1.16.0
+        docker tag vmware/cloud-controller-manager:v1.16.0_vmware.1 vmware/cloud-controller-manager:v1.16.0
+        docker tag vmware/kube-scheduler:v1.16.0_vmware.1 vmware/kube-scheduler:v1.16.0
+        docker tag vmware/kube-proxy:v1.16.0_vmware.1 vmware/kube-proxy:v1.16.0
+        docker tag vmware/coredns:v1.6.2_vmware.1 vmware/coredns:1.6.2
+        docker tag vmware/etcd:v3.3.15_vmware.1 vmware/etcd:3.3.15-0
+        swapoff -a
+        cd /root/vmware-kubernetes-v1.16.0+vmware.1/debs
+        dpkg -i *.deb
+        apt-get install -f -y
+        systemctl enable kubelet.service
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: esspks_install }
