@@ -107,6 +107,36 @@ parameters:
     label: IP address of the keystone endpoint
   ssh_private_key:
     type: string
+  install_nad_crd:
+    type: boolean
+    default: false
+  sriov_provider_net:
+    type: string
+    default: "none"
+  sriov_subnet:
+    type: string
+    default: "none"
+  sriov_ports_to_reserve:
+    type: number
+    default: 0
+  sriov_interface_number_start:
+    type: number
+    default: 100
+    description: The number to start naming the SRIOV interfaces, the interfaces will be named ens100, ens101.. etc
+
+conditions:
+  nad_crd_enabled:
+    get_param: install_nad_crd
+  sriov_enabled:
+    and:
+      - not:
+          equals:
+          - get_param: sriov_provider_net
+          - "none"
+      - not:
+          equals:
+          - get_param: sriov_ports_to_reserve
+          - 0
 
 resources:
   k8s_secgroup:
@@ -337,26 +367,29 @@ resources:
     properties:
       count: { get_param: minion_count }
       resource_def:
-        type: "OS::Nova::Server"
+        type: ../lib/minion_node_sriov_ncp.yaml
         properties:
           name:
             str_replace:
               template: $name-minion-%index%
               params:
                 $name: { get_param: name }
-          networks:
-          - network: { get_resource: mgmt_network }
-          - network: { get_resource: api_network }
-          - network: { get_resource: pod_network }
-          security_groups: [ get_resource: k8s_secgroup ]
-          flavor: { get_param: minion_flavor }
+          mgmt_network: { get_resource: mgmt_network }
+          mgmt_subnet: { get_resource: mgmt_subnet }
+          api_network: { get_resource: api_network }
+          api_subnet: { get_resource: api_subnet }
+          pod_network: { get_resource: pod_network }
+          pod_subnet: { get_resource: pod_subnet }
+          k8s_secgroup: { get_resource: k8s_secgroup }
+          open_secgroup: { get_resource: open_secgroup }
+          minion_flavor: { get_param: minion_flavor }
           image: { get_param: image }
           availability_zone: { get_param: availability_zone }
           key_name: { get_param: key_name }
-          config_drive: true
-          user_data_format: RAW
-          user_data:
-            get_resource: kube_minion_init
+          sriov_provider_net: { get_param: sriov_provider_net }
+          sriov_subnet: { get_param: sriov_subnet }
+          sriov_ports_num: { get_param: sriov_ports_to_reserve }
+          init_routine: { get_resource: kube_minion_init }
 
   generate_token:
     type: ../lib/generate_token.yaml
@@ -390,6 +423,12 @@ resources:
       mgmt_gateway: { get_attr: [mgmt_subnet, gateway_ip] }
       api_gateway: { get_attr: [api_subnet, gateway_ip] }
       pod_gateway: { get_attr: [pod_subnet, gateway_ip] }
+
+  rename_sriov_ports:
+    type: ../lib/rename_sriov_ports.yaml
+    properties:
+      sriov_ports_to_reserve: { get_param: sriov_ports_to_reserve }
+      sriov_interface_num: { get_param:  sriov_interface_number_start }
 
   docker_init:
     type: ../lib/docker_init.yaml
@@ -534,6 +573,12 @@ resources:
   install_cinder_csi:
     type: ../lib/install_cinder_csi_1.16.0.yaml
 
+  nad_crd_init:
+    type: ../lib/install_nad_crd.yaml
+
+  dummy_resource:
+    type: OS::Heat::None
+
   kube_master_init:
     type: OS::Heat::MultipartMime
     properties:
@@ -551,6 +596,7 @@ resources:
       - config: { get_resource: tag_ncp_ports }
       - config: { get_resource: start_ncp_pods }
       - config: { get_resource: install_cinder_csi }
+      - config: {if: ["nad_crd_enabled", get_resource: nad_crd_init, get_resource: dummy_resource]}
 
   kube_addl_master_init:
     type: OS::Heat::MultipartMime
@@ -578,3 +624,4 @@ resources:
       - config: { get_resource: load_ncp }
       - config: { get_resource: kubeadm_minion_init }
       - config: { get_resource: tag_ncp_ports }
+      - config: {if: ["sriov_enabled", get_resource: rename_sriov_ports, get_resource: dummy_resource]}

@@ -1,0 +1,45 @@
+# Copyright © 2019 VMware, Inc. All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+
+heat_template_version: "2018-08-31"
+description: "Set proper default gateway for a NCP stack"
+
+parameters:
+  sriov_ports_to_reserve:
+    type: number
+  sriov_interface_num:
+    type: number
+
+resources:
+  rename_sriov_ports:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            SRIOV_INTERFACE_NUM_START=$sriov_start_num
+            SRIOV_TOTAL_PORTS=$sriov_ports_num
+            MGMT_INTERFACE=$(cat /root/mgmt_intf)
+            API_INTERFACE=$(cat /root/api_intf)
+            POD_INTERFACE=$(cat /root/pod_intf)
+            for iface in $(find /sys/class/net/ -type l ! -lname '*/devices/virtual/net/*' -printf '%f ')
+            do
+                if [[ $iface != $MGMT_INTERFACE && $iface != $API_INTERFACE && $iface != $POD_INTERFACE ]]
+                then
+                    ip link set ${iface} down
+                    ip link set ${iface} name ens${SRIOV_INTERFACE_NUM_START}
+                    ip link set ens${SRIOV_INTERFACE_NUM_START} up
+                    SRIOV_INTERFACE_NUM_START=$((SRIOV_INTERFACE_NUM_START+1))
+                    SRIOV_TOTAL_PORTS=$((SRIOV_TOTAL_PORTS-1))
+                    if [[ $SRIOV_TOTAL_PORTS == 0 ]]; then
+                      break
+                    fi
+                fi
+            done
+          params:
+            $sriov_start_num: { get_param: sriov_interface_num }
+            $sriov_ports_num: { get_param: sriov_ports_to_reserve }
+outputs:
+  OS::stack_id:
+    value: { get_resource: rename_sriov_ports }
