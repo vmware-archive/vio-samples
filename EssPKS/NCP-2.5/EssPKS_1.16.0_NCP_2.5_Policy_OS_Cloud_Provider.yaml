@@ -547,7 +547,7 @@ resources:
             $master_ip: { get_attr: [main_master_node, networks, list_join: ['-', [{get_param: name}, 'api']], 0]}
 
   config_ncp:
-    type: ../lib/config_ncp_2.5.yaml
+    type: ../lib/config_ncp_2.5_policy.yaml
     properties:
       nsx_api_manager: { get_param: nsx_api_manager }
       tier0_router: { get_param: tier0_router }
