@@ -4,6 +4,8 @@
 heat_template_version: "2018-08-31"
 
 parameters:
+  name:
+    type: string
   nsx_api_manager:
     type: string
   tier0_router:
@@ -32,6 +34,7 @@ resources:
             kubectl --kubeconfig /etc/kubernetes/admin.conf create clusterrolebinding default-admin --serviceaccount=default:default --clusterrole=cluster-admin
             sed -i "s?image: nsx-ncp?image: ${DOCKER_IMAGE}:latest?g" /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
             sed -i "s?#policy_nsxapi = False?policy_nsxapi = True?g" /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
+            sed -i 's?#cluster = k8scluster?cluster = $name?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
             sed -i 's?#insecure = False?insecure = True?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
             sed -i 's?#top_tier_router = <None>?top_tier_router = $tier0_router?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
             sed -i 's?#overlay_tz = <None>?overlay_tz = $overlay_tz?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
@@ -43,6 +46,7 @@ resources:
 
             sed -i 's?tolerations:?tolerations:\n        - effect: NoSchedule\n          key: node.cloudprovider.kubernetes.io/uninitialized\n          value: "true"?g' /tmp/nsx/nsx-container-2.5/Kubernetes/ncp-ubuntu.yaml
           params:
+            $name: { get_param: name }
             $nsx_api_manager: { get_param: nsx_api_manager }
             $tier0_router: { get_param: tier0_router }
             $overlay_tz: { get_param: overlay_tz }
