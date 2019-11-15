@@ -352,7 +352,10 @@ resources:
             chown $(id -u):$(id -g) /root/.kube/config
             kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-roles.yaml
             kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/cluster/addons/rbac/cloud-controller-manager-role-bindings.yaml
-            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/controller-manager/openstack-cloud-controller-manager-ds.yaml
+            curl -O https://raw.githubusercontent.com/kubernetes/cloud-provider-openstack/v1.14.0/manifests/controller-manager/openstack-cloud-controller-manager-ds.yaml
+            sed -i 's?- --v=1?- --v=4?g' openstack-cloud-controller-manager-ds.yaml
+            sed -i 's?latest?v1.14.0?g' openstack-cloud-controller-manager-ds.yaml
+            kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f openstack-cloud-controller-manager-ds.yaml
           params:
             $name: { get_param: name }
             $pod_network_cidr: { get_param: pod_network_cidr }
