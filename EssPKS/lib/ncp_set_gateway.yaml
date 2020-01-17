@@ -20,26 +20,30 @@ resources:
         str_replace:
           template: |
             #!/bin/bash
+            sed -i "s?timeout 300;?timeout 10;?g" /etc/dhcp/dhclient.conf
             for intf in /sys/class/net/ens*; do
                 ifconfig `basename $intf` up
-                dhclient `basename $intf`
+                dhclient -1 `basename $intf`
             done
+            MGMT_SUBNET=$(echo $mgmt_gateway | cut -d"." -f1-3)
             API_SUBNET=$(echo $api_gateway | cut -d"." -f1-3)
             POD_SUBNET=$(echo $pod_gateway | cut -d"." -f1-3)
             ip -br -4 addr | while read -r line; do
-                if [[ $line =~ ${API_SUBNET} ]]
+                if [[ $line =~ ${MGMT_SUBNET} ]]
+                then
+                    intf=($line)
+                    echo ${intf} > /root/mgmt_intf
+                elif [[ $line =~ ${API_SUBNET} ]]
                 then
                     intf=($line)
                     echo ${intf} > /root/api_intf
-                fi
-                if [[ $line =~ ${POD_SUBNET} ]]
+                elif [[ $line =~ ${POD_SUBNET} ]]
                 then
                     intf=($line)
                     echo ${intf} > /root/pod_intf
                 fi
             done
-            route del default gw $api_gateway
-            route del default gw $pod_gateway
+            ip route flush 0/0
             route add default gw $mgmt_gateway
           params:
             $mgmt_gateway: { get_param: mgmt_gateway }

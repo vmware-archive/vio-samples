@@ -1,0 +1,36 @@
+# Copyright © 2019 VMware, Inc. All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+
+heat_template_version: "2018-08-31"
+
+resources:
+  nad_crd:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash
+        cat <<EOF >/etc/kubernetes/nad_crd.yaml
+        apiVersion: apiextensions.k8s.io/v1beta1
+        kind: CustomResourceDefinition
+        metadata:
+          name: network-attachment-definitions.k8s.cni.cncf.io
+        spec:
+          group: k8s.cni.cncf.io
+          versions:
+          - name: v1
+            served: true
+            storage: true
+          version: v1
+          scope: Namespaced
+          names:
+            plural: network-attachment-definitions
+            singular: network-attachment-definition
+            kind: NetworkAttachmentDefinition
+            shortNames:
+            - net-attach-def
+        EOF
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f /etc/kubernetes/nad_crd.yaml
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: nad_crd }

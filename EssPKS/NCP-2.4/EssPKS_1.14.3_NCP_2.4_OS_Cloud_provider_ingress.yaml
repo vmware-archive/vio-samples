@@ -341,6 +341,7 @@ resources:
   config_ncp:
     type: ../lib/config_ncp_2.4.yaml
     properties:
+      name: { get_param: name }
       nsx_api_manager: { get_param: nsx_api_manager }
       tier0_router: { get_param: tier0_router }
       overlay_tz: { get_param: overlay_tz }

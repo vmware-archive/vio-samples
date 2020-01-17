@@ -139,6 +139,15 @@ Networking details
  | keystone\_ip  | IP address of the keystone endpoint.|
  | ssh\_private\_key  | Private key to use for the nodes to ssh to each other.|
 
+ **The Essential PKS 1.16 NCP stack has five additional options for SRIOV networks:**
+
+ | Parameter                         | Value                             |
+ | --------------------------------- |:---------------------------------|
+ | install_nad_crd  | Install Custom Resource Definition for a NetworkAttachmentDefinition.|
+ | sriov_provider_net  | Name or Id of the SRIOV provider network to reserve SRIOV ports on.|
+ | sriov_subnet  | Name or Id of the SRIOV subnet to reserve SRIOV ports on.|
+ | sriov_ports_to_reserve  | Number of SRIOV ports to reserve on each minion node.|
+ | sriov_interface_number_start  | The HEAT stack will rename your SRIOV interfaces for consistency across installations. You can specify the number to start naming the interfaces, it is 100 by default. The interfaces will be named ens 100, ens101 an so on. |
  **NOTE:**
 
  ***The openstack cloud provider uses Public endpoints to communicate with Nova and Neutron, your VM's will need to be able to reach

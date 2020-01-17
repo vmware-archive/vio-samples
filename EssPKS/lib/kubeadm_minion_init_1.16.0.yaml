@@ -1,0 +1,50 @@
+# Copyright © 2019 VMware, Inc. All Rights Reserved.
+# SPDX-License-Identifier: BSD-2-Clause
+
+heat_template_version: "2018-08-31"
+
+parameters:
+  master_ip:
+    type: string
+  kube_token:
+    type: string
+
+resources:
+  kubeadm_minion_init:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            until $(curl --output /dev/null --insecure --silent --fail https://$master_ip:6443/healthz); do
+                printf '.'
+                sleep 5
+            done
+            API_INTF=$(cat /root/api_intf)
+            APISERVER_IP_ADDRESS=$(/sbin/ifconfig ${API_INTF} | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+            cat <<EOF >/etc/kubernetes/kubeadm.conf
+            apiVersion: kubeadm.k8s.io/v1beta2
+            kind: JoinConfiguration
+            discovery:
+              bootstrapToken:
+                token: $token
+                unsafeSkipCAVerification: true
+                apiServerEndpoint: $master_ip:6443
+            nodeRegistration:
+              kubeletExtraArgs:
+                hostname-override: $(hostname)
+                address: ${APISERVER_IP_ADDRESS}
+                healthz-bind-address: ${APISERVER_IP_ADDRESS}
+                node-ip: ${APISERVER_IP_ADDRESS}
+                cloud-provider: "external"
+            EOF
+            HOSTNAME_OVERRIDE=$(hostname)
+            kubeadm join --config /etc/kubernetes/kubeadm.conf
+          params:
+            $master_ip: { get_param: master_ip }
+            $token: { get_param: kube_token }
+
+outputs:
+  OS::stack_id:
+    value: { get_resource: kubeadm_minion_init }
