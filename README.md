@@ -5,11 +5,11 @@ SPDX-License-Identifier: BSD-2-Clause
 # VIO Samples
 # Overview
 
-This projects helps instantiate an Essential PKS cluster on Vmware Integrated Openstack (VIO) 6.0.
+This repository contains example codes or templates for VMware Integrated OpenStack (VIO). 
 
 #### Structure:
 
-**EssPKS**/ : Parent stack directory
+**EssPKS**/ : This directory contains HEAT stack templates to instantiate an Essential PKS cluster on VIO 6.0.
 
 &nbsp;&nbsp;  **calico-3.7**: HEAT stacks with the Calico 3-7 CNI plugin<br>
 &nbsp;&nbsp;  **examples**: Sample files<br>
