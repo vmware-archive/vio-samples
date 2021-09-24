@@ -2,6 +2,7 @@
 Copyright © 2019 VMware, Inc. All Rights Reserved.
 SPDX-License-Identifier: BSD-2-Clause
 -->
+# VMware has ended active development of this project, this repository will no longer be updated.
 # VIO Samples
 # Overview
 
